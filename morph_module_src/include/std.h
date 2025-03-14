@@ -15,9 +15,11 @@
 #define __max(a,b) (((a) > (b)) ? (a) : (b)) 
 #define __min(a,b) (((a) < (b)) ? (a) : (b)) 
 
+extern "C" {
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <vips/vips.h>
-
+}
+    
 #endif//STD_H

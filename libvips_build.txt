@@ -1,0 +1,39 @@
+dnf groupinstall 'Development Tools'
+
+dnf config-manager --set-enabled powertools
+dnf install ninja-build
+dnf install python3-pip
+
+pip3 install meson
+
+종속성 설치
+dnf install fftw-devel
+dnf install OpenEXR-devel
+dnf install libgsf-devel
+dnf install glib2-devel
+dnf install orc-devel
+dnf install libwebp-devel
+dnf install libjpeg-turbo-devel
+dnf install libexif-devel
+dnf install libtiff-devel
+dnf install librsvg2-devel 
+dnf install cairo-devel
+dnf install lcms2-devel
+dnf install libimagequant-devel
+
+### cgif 설치 Steps
+1. git clone https://github.com/dloebl/cgif
+2. cd cgif/
+3. meson setup --prefix=/usr build
+4. meson install -C build
+
+VIPS 라이브러리 컴파일
+
+wget https://github.com/libvips/libvips/releases/download/v8.13.3/vips-8.13.3.tar.gz
+tar xf vips-8.13.3.tar.gz
+cd vips-8.13.3
+meson setup build --libdir=lib --buildtype=release --default-library static -Ddeprecated=false -Dexamples=false -Dintrospection=disabled -Dcgif=enabled -Dexif=enabled -Dfftw=enabled -Dfontconfig=enabled -Dheif=enabled -Dheif-module=enabled -Dimagequant=enabled -Djpeg=enabled -Djpeg-xl=enabled -Djpeg-xl-module=enabled -Dlcms=enabled -Dpng=enabled -Drsvg=enabled -Dspng=enabled -Dtiff=enabled -Dwebp=enabled -Dzlib=enabled -Dnsgif=enabled
+cd build
+meson compile
+meson test
+sudo meson install
