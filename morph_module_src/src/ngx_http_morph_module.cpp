@@ -62,7 +62,23 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
 		ngx_log_error( NGX_LOG_ERR, r->connection->log, 0, "Failed to allocate response buffer." );
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
-   
+
+	VipsImage *in;
+
+    if( !(in = vips_image_new_from_file( "/svc/morph/nginx/html/input.jpg", NULL)) )
+	{
+		vips_error_exit(NULL);
+	}
+
+	if( 1 )
+	{
+		char log[ 1024*10 ];
+		sprintf(log, "DEBUG : image width = %d, image height = %d\n", vips_image_get_width(in), vips_image_get_height(in) );
+		FILE* fp = fopen("/svc/morph/nginx/sbin/morph_debug.log", "a" );
+		fwrite( log, 1, strlen(log), fp );
+		fclose( fp );
+	}  
+
     out.buf = b;
     out.next = NULL;
 
