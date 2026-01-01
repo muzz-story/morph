@@ -3,12 +3,16 @@ TARGET=ngx_http_morph_module
 INCDIRS="$ngx_addon_dir/include /usr/local/include /usr/include/glib-2.0 /usr/lib64/glib-2.0/include"
 LIBDIRS="-L/usr/local/lib"
 
-SRCS="$ngx_addon_dir/src/std.cpp \
-      $ngx_addon_dir/src/ngx_http_morph_module.cpp"
+SRCS="$ngx_addon_dir/src/ngx_http_morph_module.cpp \
+      $ngx_addon_dir/src/ngx_http_morph_image.cpp \
+      $ngx_addon_dir/src/ngx_http_morph_reader.cpp \
+      $ngx_addon_dir/src/ngx_http_morph_resizer.cpp \
+      $ngx_addon_dir/src/ngx_http_morph_filters.cpp \
+      $ngx_addon_dir/src/std.cpp"
 
 DEPS="$ngx_addon_dir/include/std.h"
 
-LIBS="-lvips -lstdc++ -lz -lm -lglib-2.0 -lxml2 -lwebp -lwebpdemux -lwebpmux -ljpeg -lpng -lgobject-2.0 -lopenjp2 -lrsvg-2 -ltiff -lgsf-1 -lfftw3 -limagequant -lcairo -llcms2 -lexif -lorc-0.4 -lIlmImf -lcgif"
+LIBS="-lvips -lstdc++ -lz -lm -lglib-2.0 -lxml2 -lwebp -lwebpdemux -lwebpmux -ljpeg -lpng -lgobject-2.0 -lopenjp2 -lrsvg-2 -ltiff -lgsf-1 -lfftw3 -limagequant -lcairo -llcms2 -lexif -lorc-0.4 -lIlmImf -lcgif -lcurl"
 
 #
 
