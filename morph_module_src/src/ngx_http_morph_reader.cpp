@@ -62,7 +62,7 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
         }
 
         if (options->debug) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Fetching URL: %s", source_path.c_str());
+            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 2. Source Type: URL Fetch (Non-Cached) - %s", source_path.c_str());
         }
 
         // HTTP/HTTPS Load via Curl
@@ -89,7 +89,8 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
             curl_easy_cleanup(curl);
             
             if (options->debug) {
-                ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Download Result: %d, Size: %d", res, out_buffer->size());
+                ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 3. Download Result: %s (Code: %d), Size: %lu bytes", 
+                    (res == CURLE_OK ? "Success" : "Failed"), res, out_buffer->size());
             }
             
             if(res != CURLE_OK) {

@@ -30,7 +30,9 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
     }
 
     // Log the identified type
-    ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Identified Image Type: %d", image_type);
+    if (options->debug) {
+        ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 4. Image Type: %d (1:JPEG, 2:PNG, 3:WEBP, 4:GIF)", image_type);
+    }
 
     // 3. Create VImage (Loading & Optimizing) / Vips 이미지 로드 및 최적화
     vips::VImage image;
@@ -215,7 +217,7 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         size_t len = 0;
         
         if (options->debug) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Writing to buffer. Format: %s", format_ext.c_str());
+            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 5. Output Location: Memory Buffer (Nginx Caching handled externally). Format: %s", format_ext.c_str());
         }
 
         image.write_to_buffer(format_ext.c_str(), (void**)&buf, &len, save_opts);

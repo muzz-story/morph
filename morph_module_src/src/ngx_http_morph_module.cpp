@@ -441,7 +441,7 @@ static void morph_thread_completion(ngx_event_t *ev)
     ngx_http_output_filter(r, &out);
     
     if (ctx->options.debug) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Morph Debug: Thread Completed. Size: %d. Cleaning up...", len);
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "[Morph Info] 7. Status: OK, Client IP: %V", &r->connection->addr_text);
     }
 
     // Cleanup C++ context
@@ -505,8 +505,7 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
 
     if (ctx->options.debug) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
-            "Morph Debug: Request Started. Service: %s, Options: %s, Source: %s", 
-            service_name.c_str(), options_str.c_str(), source_path.c_str());
+            "[Morph Info] 1. Request URL: %V", &r->uri);
     }
     
     // Default Filters & Options Init
@@ -522,6 +521,13 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     ctx->options.flip = false;
     
     parse_options(options_str, ctx->options);
+    
+    if (ctx->options.debug) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+            "[Morph Info] 6. User Options: Width=%d, Height=%d, Crop=%d, Grayscale=%d, Blur=%.1f, Rotate=%.1f, Flip=%d, Src=%s", 
+            ctx->options.width, ctx->options.height, ctx->options.has_crop, ctx->options.grayscale, 
+            ctx->options.blur_sigma, ctx->options.rotate_angle, ctx->options.flip, ctx->options.source_path.c_str());
+    }
 
     // Create Thread Task
     ngx_thread_task_t *task = ngx_thread_task_alloc(r->pool, 0);
