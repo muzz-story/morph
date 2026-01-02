@@ -103,5 +103,19 @@ vips::VImage morph_filters_apply_noise(vips::VImage image, int type, double sigm
 {
     if (sigma <= 0.0) return image;
     // ignoring type for now, default to gaussnoise
-    return image.gaussnoise(sigma, vips::VImage::option()->set("mean", 0.0));
+    // gaussnoise is a static generator in Vips C++ API
+    // VImage gaussnoise(int width, int height, VOption *options = nullptr)
+    vips::VImage noise = vips::VImage::gaussnoise(image.width(), image.height(), 
+                                                  vips::VImage::option()->set("sigma", sigma)->set("mean", 0.0));
+    
+    // Convert noise to match image bands if needed, or Vips handles it?
+    // Usually gaussnoise produces 1 band float. Image might be 3 bands uchar.
+    // We add noise to image. Vips auto-expands 1 band to match mult-band image in arithmetic.
+    
+    // Note: The result of uchar + float will be float. We might need to cast back to original format?
+    // But for a processing pipeline, keeping it float and casting later or letting Vips handle save is also fine.
+    // However, to keep it simple and safe for standard pipeline expectation (often expects like-format input/output),
+    // let's just return the addition. Vips will handle the format promotion.
+    
+    return image + noise;
 }
