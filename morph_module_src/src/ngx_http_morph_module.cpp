@@ -570,7 +570,7 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
         return NGX_DECLINED;
     }
 
-    if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
+    if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD && r->method != NGX_HTTP_DELETE) {
         return NGX_HTTP_NOT_ALLOWED;
     }
 
@@ -599,27 +599,55 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     ngx_http_core_loc_conf_t *clcf = (ngx_http_core_loc_conf_t *)ngx_http_get_module_loc_conf(r, ngx_http_core_module);
     std::string doc_root((char*)clcf->root.data, clcf->root.len);
 
+    // Initial Options for Purge or Process
+    MorphOptions options;
+    parse_options(options_str, options);
+    options.source_path = source_path;
+    options.service_name = service_name;
+    options.document_root = doc_root;
+    options.raw_options = options_str;
+    
+    if (r->method == NGX_HTTP_DELETE) {
+        // Purge (Invalidation) Logic
+        std::string cache_path = morph_image_get_cache_path(&options);
+        
+        if (unlink(cache_path.c_str()) == 0) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "Morph: Purged cache file: %s", cache_path.c_str());
+            // Return 204 No Content
+            r->headers_out.status = NGX_HTTP_NO_CONTENT;
+            // No content to send, finalize immediately
+            return ngx_http_send_header(r); 
+        } else {
+             // If file doesn't exist, is it success or 404? 
+             // Usually idempotent delete returns success (204 or 200) even if not found.
+             // But for debugging let's log.
+             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "Morph: Purge failed (not found?): %s", cache_path.c_str());
+             // Return 404 or 204? Let's return 404 to indicate not found.
+             return NGX_HTTP_NOT_FOUND;
+        }
+    }
+
     // Prepare Thread Context
     MorphThreadCtx *ctx = new MorphThreadCtx();
     ctx->r = r;
-    ctx->options.quality = cf->quality != NGX_CONF_UNSET ? cf->quality : 90;
-    ctx->options.source_path = source_path;
-    ctx->options.service_name = service_name;
-    ctx->options.document_root = doc_root;
-    ctx->options.raw_options = options_str;
-    ctx->options.debug = cf->debug == 1; // Set debug flag
+    
+    // Copy options parsed above
+    ctx->options = options;
+    
+    // Apply defaults or overrides from Location Config (if needed)
+    // Note: parse_options handles parsing, but location defaults (like quality) need to be set if not in URL?
+    // Actually parse_options only sets if key exists.
+    // So we should set defaults BEFORE parse or apply overrides.
+    // Current options struct parsed above lacks 'quality' from cf if not in URL.
+    
+    // Re-applying defaults from CF that might be missing
+    if (ctx->options.quality == 0) ctx->options.quality = cf->quality != NGX_CONF_UNSET ? cf->quality : 90;
+    ctx->options.debug = cf->debug == 1;
 
     if (ctx->options.debug) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
             "[Morph Info] 1. Request URL: %V", &r->uri);
     }
-    
-    // Default Filters & Options Init
-    ctx->options.width = 0;
-    ctx->options.height = 0;
-    ctx->options.has_crop = false;
-    ctx->options.grayscale = false;
-    ctx->options.blur_sigma = 0.0;
     ctx->options.rotate_angle = 0.0;
     ctx->options.brightness = 1.0;
     ctx->options.contrast = 1.0;

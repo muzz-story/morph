@@ -38,4 +38,12 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
  */
 ngx_int_t morph_image_validate_hex(void *data, size_t len, int *out_type);
 
+/**
+ * morph_image_get_cache_path
+ * @description Calculate local cache file path based on options. / 옵션에 기반하여 로컬 캐시 파일 경로를 계산합니다.
+ * @param {MorphOptions*} options - MorphOptions structure pointer. / MorphOptions 구조체 포인터.
+ * @returns {std::string} - Absolute path to cache file. / 캐시 파일 절대 경로.
+ */
+std::string morph_image_get_cache_path(MorphOptions *options);
+
 #endif

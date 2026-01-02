@@ -63,7 +63,7 @@ static int ensure_directory(const std::string& path) {
 }
 
 // Helper: Get Cache File Path
-static std::string get_cache_path(MorphOptions* options) {
+std::string morph_image_get_cache_path(MorphOptions* options) {
     // Structure: [Root]/[Service]/[Options]/[File]
     std::string path = options->document_root;
     if (path.back() != '/') path += "/";
@@ -104,7 +104,7 @@ static std::string get_cache_path(MorphOptions* options) {
 ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_log_t *log)
 {
     // 0. Cache Check
-    std::string cache_path = get_cache_path(options);
+    std::string cache_path = morph_image_get_cache_path(options);
     bool cache_hit = false;
     
     if (access(cache_path.c_str(), F_OK) == 0) {
