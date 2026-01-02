@@ -509,7 +509,13 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
             service_name.c_str(), options_str.c_str(), source_path.c_str());
     }
     
-    // Default Filters
+    // Default Filters & Options Init
+    ctx->options.width = 0;
+    ctx->options.height = 0;
+    ctx->options.has_crop = false;
+    ctx->options.grayscale = false;
+    ctx->options.blur_sigma = 0.0;
+    ctx->options.rotate_angle = 0.0;
     ctx->options.brightness = 1.0;
     ctx->options.contrast = 1.0;
     ctx->options.noise_sigma = 0.0;
