@@ -26,7 +26,7 @@ vips::VImage morph_resizer_resize(vips::VImage image, int width, int height)
         scale = (double)width / input_w;
         vscale = (double)height / input_h;
         
-        return image.resize(scale, VImage::option()->set("vscale", vscale));
+        return image.resize(scale, vips::VImage::option()->set("vscale", vscale));
     } else if (width > 0) {
         scale = (double)width / input_w;
         return image.resize(scale);
@@ -85,7 +85,7 @@ vips::VImage morph_resizer_rotate(vips::VImage image, double angle)
     // Arbitrary rotation
     // Note: similarity rotates about 0,0 (top left). We might want center rotation.
     // But basic similarity usage:
-    return image.similarity(VImage::option()->set("angle", angle));
+    return image.similarity(vips::VImage::option()->set("angle", angle));
 }
 
 /**
