@@ -132,6 +132,43 @@ static ngx_http_module_t ngx_http_morph_module_ctx =
     ngx_http_morph_merge_loc_conf                           /* merge location configuration */
 };
 
+/**
+ * ngx_http_morph_init_process
+ * @description Initialize worker process (Libvips, Curl). / 워커 프로세스를 초기화합니다.
+ * @param {ngx_cycle_t*} cycle - Nginx cycle object. / Nginx 사이클 객체.
+ * @returns {ngx_int_t} - NGX_OK or error. / 성공 시 NGX_OK 반환.
+ */
+static ngx_int_t ngx_http_morph_init_process(ngx_cycle_t *cycle)
+{
+    // Initialize Libcurl
+    if (curl_global_init(CURL_GLOBAL_ALL) != 0) {
+        ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "Morph: Failed to initialize Libcurl");
+        return NGX_ERROR;
+    }
+
+    // Initialize Libvips
+    if (VIPS_INIT("nginx-morph")) {
+        ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "Morph: Failed to initialize Libvips: %s", vips_error_buffer());
+        vips_error_clear();
+        return NGX_ERROR;
+    }
+
+    // Disable Vips cache and concurrency to let Nginx manage threads?
+    // Usually good to limit vips concurrency per request to 1 as we run in thread pool.
+    vips_concurrency_set(1);
+    vips_cache_set_max(0); // Disable internal cache if we implement our own Nginx cache
+
+    ngx_log_error(NGX_LOG_INFO, cycle->log, 0, "Morph: Worker process initialized (Vips, Curl)");
+
+    return NGX_OK;
+}
+
+static void ngx_http_morph_exit_process(ngx_cycle_t *cycle)
+{
+    vips_shutdown();
+    curl_global_cleanup();
+}
+
 ngx_module_t ngx_http_morph_module = 
 {
     NGX_MODULE_V1,
@@ -140,10 +177,10 @@ ngx_module_t ngx_http_morph_module =
     NGX_HTTP_MODULE,                                        /* module type */
     NULL,                                                   /* init master */
     NULL,                                                   /* init module */
-    NULL,                                                   /* init process */
+    ngx_http_morph_init_process,                            /* init process */
     NULL,                                                   /* init thread */
     NULL,                                                   /* exit thread */
-    NULL,                                                   /* exit process */
+    ngx_http_morph_exit_process,                            /* exit process */
     NULL,                                                   /* exit master */
     NGX_MODULE_V1_PADDING
 };
