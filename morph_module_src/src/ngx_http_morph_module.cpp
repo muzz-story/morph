@@ -19,25 +19,7 @@ typedef struct {
 } ngx_http_morph_loc_conf_t;
 
 // Image Process Options / 이미지 처리 옵션
-typedef struct {
-    int width;
-    int height;
-    
-    // Crop
-    int cw, ch, cx, cy;
-    bool has_crop;
-
-    // Filters
-    std::string bg_color;
-    double blur_sigma;
-    std::string format;
-    bool grayscale;
-    int quality;
-    double rotate_angle;
-    
-    // Source
-    std::string source_path;
-} MorphOptions;
+// MorphOptions is defined in ngx_http_morph_image.h
 
 /**
  * ngx_http_morph
@@ -363,10 +345,15 @@ static void morph_thread_completion(ngx_event_t *ev)
     std::string fmt = ctx->options.format;
     if (fmt.empty()) fmt = "jpg"; // default
 
-    if (fmt == "png") ngx_str_set(&r->headers_out.content_type, "image/png");
-    else if (fmt == "webp") ngx_str_set(&r->headers_out.content_type, "image/webp");
-    else if (fmt == "gif") ngx_str_set(&r->headers_out.content_type, "image/gif");
-    else ngx_str_set(&r->headers_out.content_type, "image/jpeg");
+    if (fmt == "png") {
+        ngx_str_set(&r->headers_out.content_type, "image/png");
+    } else if (fmt == "webp") {
+        ngx_str_set(&r->headers_out.content_type, "image/webp");
+    } else if (fmt == "gif") {
+        ngx_str_set(&r->headers_out.content_type, "image/gif");
+    } else {
+        ngx_str_set(&r->headers_out.content_type, "image/jpeg");
+    }
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = len;
