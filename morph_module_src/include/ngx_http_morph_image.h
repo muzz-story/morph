@@ -8,38 +8,7 @@
 // but better to include the struct definition from a common header.
 // For this stub, I will assume a struct MorphOptions is passed.
 
-// Image Process Options / 이미지 처리 옵션
-typedef struct {
-    int width;
-    int height;
-    
-    // Crop
-    int cw, ch, cx, cy;
-    bool has_crop;
-
-    // Filters
-    std::string bg_color;
-    double blur_sigma;
-    std::string format;
-    bool grayscale;
-    int quality;
-    double rotate_angle;
-    
-    // New Filters
-    bool flip;
-    int flip_dir; // 0: vertical, 1: horizontal
-    double brightness;
-    double contrast;
-    double noise_sigma;
-    int noise_type;
-    
-    // Source
-    std::string source_path;
-    
-    // Path Mapping
-    std::string service_name;
-    std::string document_root;
-} MorphOptions;
+// MorphOptions definition moved to std.h
 
 typedef enum {
     MORPH_IMG_UNKNOWN = 0,
