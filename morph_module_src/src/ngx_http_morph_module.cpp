@@ -245,53 +245,83 @@ static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *c
  * @returns {void}
  */
 static void parse_options(const std::string& segment, MorphOptions& opts) {
-    // 200x300
-    // 200x300_C10,10,10,20
-    // 200x300_F(bakground_color:ff00ff)
+    // 200x300_C10,10,10,20_F(blur:1.5)
     
-    // Split by '_'
-    std::regex underscore_re("_");
-    std::sregex_token_iterator it(segment.begin(), segment.end(), underscore_re, -1);
-    std::sregex_token_iterator end;
-
-    for (; it != end; ++it) {
-        std::string part = *it;
+    // Split by '_' manually
+    size_t start = 0;
+    size_t end = segment.find('_');
+    
+    while (end != std::string::npos) {
+        std::string part = segment.substr(start, end - start);
         
-        // Dimension: 200x300
-        if (std::regex_match(part, std::regex("^\\d+x\\d+$"))) {
-            sscanf(part.c_str(), "%dx%d", &opts.width, &opts.height);
-            continue;
-        }
-
-        // Crop: C10,10,10,20
-        if (part[0] == 'C') {
-            opts.has_crop = true;
-            sscanf(part.c_str(), "C%d,%d,%d,%d", &opts.cx, &opts.cy, &opts.cw, &opts.ch);
-            continue;
-        }
-
-        // Filters: F(...)
-        if (part[0] == 'F' && part.size() > 2 && part[1] == '(' && part.back() == ')') {
-            std::string content = part.substr(2, part.size() - 3); // remove F( and )
-            
-            // content might be "key:value" or "key"
+        // Process Part
+        if (part[0] == 'C') { // Crop
+             sscanf(part.c_str(), "C%d,%d,%d,%d", &opts.cx, &opts.cy, &opts.cw, &opts.ch);
+             opts.has_crop = true;
+        } else if (part[0] == 'F' && part.size() > 2 && part[1] == '(' && part.back() == ')') { // Filter
+            std::string content = part.substr(2, part.size() - 3);
             size_t colon_pos = content.find(':');
             std::string key = (colon_pos == std::string::npos) ? content : content.substr(0, colon_pos);
             std::string val = (colon_pos == std::string::npos) ? "" : content.substr(colon_pos + 1);
 
             if (key == "bakground_color" || key == "background_color") opts.bg_color = val;
-            else if (key == "blur") opts.blur_sigma = std::stod(val);
+            else if (key == "blur" && !val.empty()) opts.blur_sigma = std::stod(val);
             else if (key == "format") opts.format = val;
             else if (key == "grayscale") opts.grayscale = true;
-            else if (key == "quality") opts.quality = std::stoi(val);
-            else if (key == "rotate") opts.rotate_angle = std::stod(val);
+            else if (key == "quality" && !val.empty()) opts.quality = std::stoi(val);
+            else if (key == "rotate" && !val.empty()) opts.rotate_angle = std::stod(val);
             else if (key == "flip") {
                 opts.flip = true;
                 opts.flip_dir = (val == "h") ? 1 : 0;
             }
-            else if (key == "brightness") opts.brightness = std::stod(val);
-            else if (key == "contrast") opts.contrast = std::stod(val);
-            else if (key == "noise") opts.noise_sigma = std::stod(val);
+            else if (key == "brightness" && !val.empty()) opts.brightness = std::stod(val);
+            else if (key == "contrast" && !val.empty()) opts.contrast = std::stod(val);
+            else if (key == "noise" && !val.empty()) opts.noise_sigma = std::stod(val);
+        } else {
+            // Assume Dimension: 200x300
+            int w = 0, h = 0;
+            if (sscanf(part.c_str(), "%dx%d", &w, &h) == 2) {
+                opts.width = w;
+                opts.height = h;
+            }
+        }
+
+        start = end + 1;
+        end = segment.find('_', start);
+    }
+    
+    // Process Last Part
+    std::string part = segment.substr(start);
+    if (!part.empty()) {
+        if (part[0] == 'C') { // Crop
+             sscanf(part.c_str(), "C%d,%d,%d,%d", &opts.cx, &opts.cy, &opts.cw, &opts.ch);
+             opts.has_crop = true;
+        } else if (part[0] == 'F' && part.size() > 2 && part[1] == '(' && part.back() == ')') { // Filter
+            // Same logic for filter
+             std::string content = part.substr(2, part.size() - 3);
+            size_t colon_pos = content.find(':');
+            std::string key = (colon_pos == std::string::npos) ? content : content.substr(0, colon_pos);
+            std::string val = (colon_pos == std::string::npos) ? "" : content.substr(colon_pos + 1);
+
+            if (key == "bakground_color" || key == "background_color") opts.bg_color = val;
+            else if (key == "blur" && !val.empty()) opts.blur_sigma = std::stod(val);
+            else if (key == "format") opts.format = val;
+            else if (key == "grayscale") opts.grayscale = true;
+            else if (key == "quality" && !val.empty()) opts.quality = std::stoi(val);
+            else if (key == "rotate" && !val.empty()) opts.rotate_angle = std::stod(val);
+            else if (key == "flip") {
+                opts.flip = true;
+                opts.flip_dir = (val == "h") ? 1 : 0;
+            }
+            else if (key == "brightness" && !val.empty()) opts.brightness = std::stod(val);
+            else if (key == "contrast" && !val.empty()) opts.contrast = std::stod(val);
+            else if (key == "noise" && !val.empty()) opts.noise_sigma = std::stod(val);
+        } else {
+             int w = 0, h = 0;
+            if (sscanf(part.c_str(), "%dx%d", &w, &h) == 2) {
+                opts.width = w;
+                opts.height = h;
+            }
         }
     }
 }
