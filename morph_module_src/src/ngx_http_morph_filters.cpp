@@ -55,7 +55,7 @@ vips::VImage morph_filters_set_background(vips::VImage image, const char *color_
     // If output is to be B/W, we might need 1 value, but flatten usually handles RGB.
     
     // vips flatten uses 'background' option which is VipsArrayDouble
-    return image.flatten(VImage::option()->set("background", bg));
+    return image.flatten(vips::VImage::option()->set("background", bg));
 }
 
 /**
@@ -86,7 +86,6 @@ vips::VImage morph_filters_apply_contrast(vips::VImage image, double contrast)
     // Assuming 8-bit range mainly. 
     // formula: val * contrast + (128 - 128 * contrast)
     // For many VIPS operations, it promotes to float. 
-    double offset = 127.5 * (1.0 - contrast); 
     // Use 127.5 for midpoint? or 128? 128 is indicated in W3C filters.
     // Let's use 128.
     return image.linear(contrast, 128.0 * (1.0 - contrast));
@@ -104,5 +103,5 @@ vips::VImage morph_filters_apply_noise(vips::VImage image, int type, double sigm
 {
     if (sigma <= 0.0) return image;
     // ignoring type for now, default to gaussnoise
-    return image.gaussnoise(sigma, VImage::option()->set("mean", 0.0));
+    return image.gaussnoise(sigma, vips::VImage::option()->set("mean", 0.0));
 }
