@@ -42,7 +42,13 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
 {
     std::string source_path = options->source_path;
 
+    // Failover Logic
+    std::vector<std::string> try_urls;
+
     if (source_path.find("http") == 0) {
+        // Absolute URL -> Single Attempt
+        // Security checks and slash fixes applied above
+        
         // SSRF Check: Basic String Check (Robust check requires DNS resolution)
         if (source_path.find("localhost") != std::string::npos ||
             source_path.find("127.") != std::string::npos ||
@@ -60,87 +66,104 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
         } else if (source_path.find("http:/") == 0 && source_path.find("http://") == std::string::npos) {
             source_path.replace(0, 6, "http://");
         }
-
-        if (options->debug) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 2. Source Type: URL Fetch (Non-Cached) - %s", source_path.c_str());
-        }
-
-        // HTTP/HTTPS Load via Curl
-        CURL *curl;
-        CURLcode res;
         
-        curl = curl_easy_init();
-        if(curl) {
-            curl_easy_setopt(curl, CURLOPT_URL, source_path.c_str());
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_to_string);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, out_buffer);
-            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_header_cb);
-            curl_easy_setopt(curl, CURLOPT_HEADERDATA, out_buffer);
-            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-            
-            // Performance/Stability: Timeouts
-            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L); // 5 seconds connect timeout
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);      // 15 seconds total operation timeout
-            
-            // Security: Protocol Restriction
-            curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
-            
-            res = curl_easy_perform(curl);
-            curl_easy_cleanup(curl);
-            
-            if (options->debug) {
-                ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 3. Download Result: %s (Code: %d), Size: %lu bytes", 
-                    (res == CURLE_OK ? "Success" : "Failed"), res, out_buffer->size());
-            }
-            
-            if(res != CURLE_OK) {
-                if (options->debug) {
-                    ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Curl Error: %s", curl_easy_strerror(res));
-                }
-                return NGX_HTTP_NOT_FOUND;
-            }
-        } else {
-             return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
+        try_urls.push_back(source_path);
+
     } else {
-        // Local File Load
-        
+        // Relative Path -> Multi-Source Failover
         // Security Check: Path Traversal
         if (source_path.find("..") != std::string::npos) {
             ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Security detected path traversal attempt: %s", source_path.c_str());
             return NGX_HTTP_FORBIDDEN;
         }
-
-        // Construct Path: root + / + service + / + source_path
-        std::string full_path = options->document_root;
         
-        // Ensure root ends with / if needed, or just append /
-        if (!full_path.empty() && full_path.back() != '/') {
-            full_path += "/";
+        // Find Service Config
+        if (g_morph_services.find(options->service_name) != g_morph_services.end()) {
+            MorphServiceConfig& svc = g_morph_services[options->service_name];
+            
+            // Generate full URLs from base sources
+            for (size_t i=0; i<svc.sources.size(); i++) {
+                std::string base = svc.sources[i];
+                if (base.back() != '/' && source_path.front() != '/') base += "/";
+                try_urls.push_back(base + source_path);
+            }
         }
         
-        full_path += options->service_name;
-        full_path += "/";
-        full_path += source_path;
+        // If no sources defined, maybe local file fallback?
+        // Current implementation assumes local file if no http protocol.
+        // But with multi-source config, user might want to fallback to local?
+        // Or if sources is empty, use local file read?
+        
+        if (try_urls.empty()) {
+            // No Sources configured -> Fallback to Local Directory Read
+             std::string full_path = options->document_root;
+            if (!full_path.empty() && full_path.back() != '/') full_path += "/";
+            full_path += options->service_name + "/" + source_path;
+            
+            if (options->debug) {
+                 ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 2. Source Type: Local Read - %s", full_path.c_str());
+            }
 
-        ngx_log_error(NGX_LOG_INFO, log, 0, "Morph: Reading local file: %s", full_path.c_str());
+            FILE *fp = fopen(full_path.c_str(), "rb");
+            if (!fp) {
+                ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: File not found: %s", full_path.c_str());
+                return NGX_HTTP_NOT_FOUND;
+            }
 
-        FILE *fp = fopen(full_path.c_str(), "rb");
-        if (!fp) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: File not found: %s", full_path.c_str());
-            return NGX_HTTP_NOT_FOUND;
+            fseek(fp, 0, SEEK_END);
+            long fsize = ftell(fp);
+            fseek(fp, 0, SEEK_SET);
+
+            if (fsize > 0) {
+                out_buffer->resize(fsize);
+                fread(&(*out_buffer)[0], 1, fsize, fp);
+            }
+            fclose(fp);
+            return NGX_OK;
         }
-
-        fseek(fp, 0, SEEK_END);
-        long fsize = ftell(fp);
-        fseek(fp, 0, SEEK_SET);
-
-        if (fsize > 0) {
-            out_buffer->resize(fsize);
-            fread(&(*out_buffer)[0], 1, fsize, fp);
-        }
-        fclose(fp);
     }
+
+    // Process Fetch List
+    for (size_t i=0; i<try_urls.size(); i++) {
+        std::string target_url = try_urls[i];
+        
+        if (options->debug) {
+            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 2. Source Type: URL Fetch (Attempt %d/%d) - %s", i+1, try_urls.size(), target_url.c_str());
+        }
+
+        // Curl
+        CURL *curl = curl_easy_init();
+        if(curl) {
+            curl_easy_setopt(curl, CURLOPT_URL, target_url.c_str());
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_to_string);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, out_buffer);
+            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_header_cb);
+            curl_easy_setopt(curl, CURLOPT_HEADERDATA, out_buffer);
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L); 
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);    
+            curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+            
+            CURLcode res = curl_easy_perform(curl);
+            long http_code = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+            curl_easy_cleanup(curl);
+            
+            if (res == CURLE_OK && http_code >= 200 && http_code < 300) {
+                if (options->debug) {
+                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 3. Download Success: %lu bytes", out_buffer->size());
+                }
+                return NGX_OK; // Success
+            } else {
+                 if (options->debug) {
+                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Download Failed (Code: %d, HTTP: %ld). Trying next...", res, http_code);
+                }
+                out_buffer->clear(); // Clear for next attempt
+            }
+        }
+    }
+
+    return NGX_HTTP_NOT_FOUND; // All failed
 
     if (out_buffer->empty()) {
         return NGX_HTTP_NOT_FOUND;

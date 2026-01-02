@@ -23,6 +23,14 @@ extern "C" {
 
 #include <vips/vips8>
 
+// JSON & Streams
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include "json.hpp"
+using json = nlohmann::json;
+
+// Shared Structures
 // Image Process Options / 이미지 처리 옵션
 typedef struct {
     int width;
@@ -57,5 +65,16 @@ typedef struct {
     std::string document_root;
     std::string raw_options;
 } MorphOptions;
+
+// Service Configuration Structure
+struct MorphServiceConfig {
+    std::vector<std::string> sources;
+    int ttl; // seconds, -1 for infinite
+};
+
+// Global Configuration Map (Service Name -> Config)
+extern std::map<std::string, MorphServiceConfig> g_morph_services;
+/* Config file path stored from nginx.conf */
+extern std::string g_morph_config_file_path;
     
 #endif//STD_H

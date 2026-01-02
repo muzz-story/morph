@@ -105,8 +105,34 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
 {
     // 0. Cache Check
     std::string cache_path = get_cache_path(options);
+    bool cache_hit = false;
     
     if (access(cache_path.c_str(), F_OK) == 0) {
+        // Prepare to check TTL
+        struct stat st;
+        if (stat(cache_path.c_str(), &st) == 0) {
+            // Find service config
+            int ttl = -1;
+            if (g_morph_services.find(options->service_name) != g_morph_services.end()) {
+                ttl = g_morph_services[options->service_name].ttl;
+            }
+            
+            time_t now = time(NULL);
+            if (ttl != -1 && (now - st.st_mtime) > ttl) {
+                // Expired
+                if (options->debug) {
+                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache EXPIRED (Age: %ds, TTL: %ds): %s", (int)(now - st.st_mtime), ttl, cache_path.c_str());
+                }
+                unlink(cache_path.c_str());
+                // Fallthrough to miss
+            } else {
+                // Valid Hit
+                cache_hit = true;
+            }
+        }
+    }
+    
+    if (cache_hit) {
         // Cache Hit
         if (options->debug) {
             ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache HIT: %s", cache_path.c_str());

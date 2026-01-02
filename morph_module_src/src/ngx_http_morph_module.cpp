@@ -148,6 +148,11 @@ static ngx_http_module_t ngx_http_morph_module_ctx =
  * @param {ngx_cycle_t*} cycle - Nginx cycle object. / Nginx 사이클 객체.
  * @returns {ngx_int_t} - NGX_OK or error. / 성공 시 NGX_OK 반환.
  */
+
+// Initialize Globals
+std::map<std::string, MorphServiceConfig> g_morph_services;
+std::string g_morph_config_file_path; // Will be set during configuration merge or init? 
+
 static ngx_int_t ngx_http_morph_init_process(ngx_cycle_t *cycle)
 {
     // Initialize Libcurl
@@ -163,12 +168,66 @@ static ngx_int_t ngx_http_morph_init_process(ngx_cycle_t *cycle)
         return NGX_ERROR;
     }
 
-    // Disable Vips cache and concurrency to let Nginx manage threads?
-    // Usually good to limit vips concurrency per request to 1 as we run in thread pool.
     vips_concurrency_set(1);
-    vips_cache_set_max(0); // Disable internal cache if we implement our own Nginx cache
+    vips_cache_set_max(0);
 
     ngx_log_error(NGX_LOG_INFO, cycle->log, 0, "Morph: Worker process initialized (Vips, Curl)");
+
+    // Load Service Configuration (morph.conf)
+    if (!g_morph_config_file_path.empty()) {
+        ngx_log_error(NGX_LOG_INFO, cycle->log, 0, "Morph: Loading config from %s", g_morph_config_file_path.c_str());
+        
+        std::ifstream f(g_morph_config_file_path.c_str());
+        if (f.is_open()) {
+            try {
+                // Parse JSON
+                json v = json::parse(f);
+                
+                // Parse "service" object
+                if (v.contains("service") && v["service"].is_object()) {
+                    auto services = v["service"];
+                    for (auto it = services.begin(); it != services.end(); ++it) {
+                        std::string service_name = it.key();
+                        auto svc_conf = it.value();
+                        
+                        if (svc_conf.is_object()) {
+                            MorphServiceConfig config;
+                            
+                            // Parse TTL
+                            if (svc_conf.contains("ttl") && svc_conf["ttl"].is_number()) {
+                                config.ttl = svc_conf["ttl"].get<int>();
+                            } else {
+                                config.ttl = -1;
+                            }
+                            
+                            // Parse Source (Array)
+                            if (svc_conf.contains("source") && svc_conf["source"].is_array()) {
+                                for (const auto& src : svc_conf["source"]) {
+                                    if (src.is_string()) {
+                                        config.sources.push_back(src.get<std::string>());
+                                    }
+                                }
+                            }
+                            
+                            g_morph_services[service_name] = config;
+                            ngx_log_error(NGX_LOG_INFO, cycle->log, 0, "Morph: Loaded Service '%s' (TTL: %d, Sources: %d)", 
+                                service_name.c_str(), config.ttl, config.sources.size());
+                        }
+                    }
+                }
+            } catch (json::parse_error& e) {
+                 ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "Morph: JSON Parse Error: %s", e.what());
+            } catch (json::type_error& e) {
+                 ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "Morph: JSON Type Error: %s", e.what());
+            }
+
+            f.close();
+        } else {
+            ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "Morph: Failed to open config file: %s", g_morph_config_file_path.c_str());
+        }
+    } else {
+        ngx_log_error(NGX_LOG_WARN, cycle->log, 0, "Morph: No config file path set (service directive missing?)");
+    }
 
     return NGX_OK;
 }
@@ -245,6 +304,52 @@ static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *c
     ngx_conf_merge_value(conf->height_max, prev->height_max, 4000);
     ngx_conf_merge_str_value(conf->service_file, prev->service_file, "");
     ngx_conf_merge_value(conf->debug, prev->debug, 0); // Default debug off
+    
+    // Store global config path if available
+    // Note: If multiple server blocks define service_file, last one wins.
+    // For single config usage this is acceptable.
+    if (conf->service_file.len > 0) {
+        // Resolve absolute path? conf->service_file might be relative to conf prefix.
+        // Nginx usually handles this in directives, but here we just possess a string.
+        // If it starts with /, it's absolute.
+        // Else combine with prefix.
+        
+        if (conf->service_file.data[0] == '/') {
+            g_morph_config_file_path.assign((char*)conf->service_file.data, conf->service_file.len);
+        } else {
+             // Relative path -> Prepend conf prefix
+             // We can use ngx_cycle->conf_prefix
+             // But we are in conf phase, so use cf->cycle->conf_prefix
+             std::string prefix((char*)cf->cycle->conf_prefix.data, cf->cycle->conf_prefix.len);
+             std::string file((char*)conf->service_file.data, conf->service_file.len);
+             g_morph_config_file_path = prefix + file;
+        }
+
+        // Validate Configuration File (Critical for nginx -t and reload safety)
+        std::ifstream f(g_morph_config_file_path.c_str());
+        if (!f.is_open()) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "Morph: Config file not found: %s", g_morph_config_file_path.c_str());
+            return NGX_CONF_ERROR;
+        }
+
+        std::stringstream buffer;
+        buffer << f.rdbuf();
+        std::string json_content = buffer.str();
+        f.close();
+
+        try {
+            json v = json::parse(json_content);
+            
+            // Optional: Validate structure deeply here if strictly required
+            if (!v.is_object() || !v.contains("service")) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "Morph: Config JSON missing 'service' object in %s", g_morph_config_file_path.c_str());
+                return NGX_CONF_ERROR;
+            }
+        } catch (json::parse_error& e) {
+             ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "Morph: Config JSON Syntax Error in %s: %s", g_morph_config_file_path.c_str(), e.what());
+             return NGX_CONF_ERROR;
+        }
+    }
 
     return NGX_CONF_OK;
 }
