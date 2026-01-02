@@ -27,6 +27,7 @@ extern "C" {
 typedef struct {
     int width;
     int height;
+    bool debug;
     
     // Crop
     int cw, ch, cx, cy;

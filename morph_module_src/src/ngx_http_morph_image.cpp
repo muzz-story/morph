@@ -34,6 +34,11 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
 
     // 3. Create VImage (Loading & Optimizing) / Vips 이미지 로드 및 최적화
     vips::VImage image;
+    
+    if (options->debug) {
+        ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Loading Image");
+    }
+    
     try {
         // Optimization: Use thumbnail_buffer for shrink-on-load
         if (options->width > 0 || options->height > 0) {
@@ -130,6 +135,9 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         
         // Apply Resize
         if (options->width > 0 || options->height > 0) {
+            if (options->debug) {
+                ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Applying Resize: %dx%d", options->width, options->height);
+            }
             image = morph_resizer_resize(image, options->width, options->height);
         }
 
@@ -206,6 +214,10 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         char *buf = NULL;
         size_t len = 0;
         
+        if (options->debug) {
+            ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Writing to buffer. Format: %s", format_ext.c_str());
+        }
+
         image.write_to_buffer(format_ext.c_str(), (void**)&buf, &len, save_opts);
         
         if (buf && len > 0) {

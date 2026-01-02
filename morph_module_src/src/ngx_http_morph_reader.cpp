@@ -61,7 +61,9 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
             source_path.replace(0, 6, "http://");
         }
 
-        ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Fetching URL: %s", source_path.c_str());
+        if (options->debug) {
+            ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Fetching URL: %s", source_path.c_str());
+        }
 
         // HTTP/HTTPS Load via Curl
         CURL *curl;
@@ -86,8 +88,14 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
             res = curl_easy_perform(curl);
             curl_easy_cleanup(curl);
             
+            if (options->debug) {
+                ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Download Result: %d, Size: %d", res, out_buffer->size());
+            }
+            
             if(res != CURLE_OK) {
-                ngx_log_error(NGX_LOG_ERR, log, 0, "Curl Error: %s", curl_easy_strerror(res));
+                if (options->debug) {
+                    ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Curl Error: %s", curl_easy_strerror(res));
+                }
                 return NGX_HTTP_NOT_FOUND;
             }
         } else {

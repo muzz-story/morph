@@ -16,6 +16,7 @@ typedef struct {
     ngx_int_t   height_min;
     ngx_int_t   height_max;
     ngx_str_t   service_file;
+    ngx_flag_t  debug;
 } ngx_http_morph_loc_conf_t;
 
 // Image Process Options / 이미지 처리 옵션
@@ -114,6 +115,15 @@ static ngx_command_t ngx_http_morph_commands[] =
         NULL
     },
 
+    { 
+        ngx_string( "morph_debug" ),
+        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_flag_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_morph_loc_conf_t, debug),
+        NULL
+    },
+
     ngx_null_command
 };
 
@@ -207,6 +217,7 @@ static void* ngx_http_morph_create_loc_conf(ngx_conf_t *cf)
     conf->width_max = NGX_CONF_UNSET;
     conf->height_min = NGX_CONF_UNSET;
     conf->height_max = NGX_CONF_UNSET;
+    conf->debug = NGX_CONF_UNSET;
     // ngx_str_t is initialized to {0, NULL} by pcalloc
 
     return conf;
@@ -233,6 +244,7 @@ static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *c
     ngx_conf_merge_value(conf->height_min, prev->height_min, 1);
     ngx_conf_merge_value(conf->height_max, prev->height_max, 4000);
     ngx_conf_merge_str_value(conf->service_file, prev->service_file, "");
+    ngx_conf_merge_value(conf->debug, prev->debug, 0); // Default debug off
 
     return NGX_CONF_OK;
 }
@@ -428,6 +440,10 @@ static void morph_thread_completion(ngx_event_t *ev)
     ngx_http_send_header(r);
     ngx_http_output_filter(r, &out);
     
+    if (ctx->options.debug) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Morph Debug: Thread Completed. Size: %d. Cleaning up...", len);
+    }
+
     // Cleanup C++ context
     delete ctx;
     
@@ -485,6 +501,13 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     ctx->options.source_path = source_path;
     ctx->options.service_name = service_name;
     ctx->options.document_root = doc_root;
+    ctx->options.debug = cf->debug == 1; // Set debug flag
+
+    if (ctx->options.debug) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+            "Morph Debug: Request Started. Service: %s, Options: %s, Source: %s", 
+            service_name.c_str(), options_str.c_str(), source_path.c_str());
+    }
     
     // Default Filters
     ctx->options.brightness = 1.0;
