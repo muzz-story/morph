@@ -529,8 +529,17 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     task->event.handler = morph_thread_completion;
     task->event.data = task;
 
-    // Post to default pool (NULL)
-    if (ngx_thread_task_post(NULL, task) != NGX_OK) {
+    // Get Thread Pool from Core Config
+    if (clcf->thread_pool == NULL) {
+         if (ctx->options.debug) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Morph Debug: No thread pool configured in location");
+         }
+         delete ctx;
+         return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    // Post to configured pool
+    if (ngx_thread_task_post(clcf->thread_pool, task) != NGX_OK) {
         delete ctx;
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
