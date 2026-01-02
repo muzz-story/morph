@@ -501,6 +501,7 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     ctx->options.source_path = source_path;
     ctx->options.service_name = service_name;
     ctx->options.document_root = doc_root;
+    ctx->options.raw_options = options_str;
     ctx->options.debug = cf->debug == 1; // Set debug flag
 
     if (ctx->options.debug) {

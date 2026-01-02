@@ -14,8 +14,115 @@
  * @param {ngx_log_t*} log - Logger. / 로거.
  * @returns {ngx_int_t} - NGX_OK or error. / 성공 시 NGX_OK 또는 에러.
  */
+#include <sys/stat.h>
+#include <openssl/md5.h>
+#include <iomanip>
+#include <sstream>
+#include <fstream>
+#include <unistd.h>
+
+// Helper: Compute MD5
+static std::string compute_md5(const std::string& str) {
+    unsigned char result[MD5_DIGEST_LENGTH];
+    MD5((unsigned char*)str.c_str(), str.size(), result);
+
+    std::stringstream ss;
+    for(int i = 0; i < MD5_DIGEST_LENGTH; i++) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)result[i];
+    }
+    return ss.str();
+}
+
+// Helper: Ensure Directory Exists (Recursive)
+static int ensure_directory(const std::string& path) {
+    std::string current_path;
+    std::string rest = path;
+    
+    // Handle absolute path
+    if (path.length() > 0 && path[0] == '/') {
+        current_path = "/";
+        rest = path.substr(1);
+    }
+    
+    size_t pos = 0;
+    while((pos = rest.find('/')) != std::string::npos) {
+        current_path += rest.substr(0, pos);
+        
+        // mkdir if not exists
+        struct stat st;
+        if (stat(current_path.c_str(), &st) != 0) {
+            if (mkdir(current_path.c_str(), 0755) != 0 && errno != EEXIST) {
+                return -1;
+            }
+        }
+        
+        current_path += "/";
+        rest = rest.substr(pos + 1);
+    }
+    return 0;
+}
+
+// Helper: Get Cache File Path
+static std::string get_cache_path(MorphOptions* options) {
+    // Structure: [Root]/[Service]/[Options]/[File]
+    std::string path = options->document_root;
+    if (path.back() != '/') path += "/";
+    
+    path += options->service_name + "/";
+    path += options->raw_options + "/";
+    
+    if (options->source_path.find("http") == 0) {
+        // External URL -> MD5 Hash
+        std::string hash = compute_md5(options->source_path);
+        
+        // Extension from format? or .jpg default?
+        // Cache name should probably include FORMAT or EXTENSION to avoid collision if user changes format via options
+        // But options are in the folder path. So we just need an extension.
+        // Let's deduce extension from source URL or saved format.
+        // Actually, the result format is determined by options->format.
+        // If option has format=png, folder is different (raw_options includes it).
+        // So just file name is needed.
+        // We add ".bin" or extension to be safe.
+        path += hash; 
+        // We append extension later based on output format? 
+        // Or just store as is. Let's append appropriate extension.
+        if (options->format == "png") path += ".png";
+        else if (options->format == "webp") path += ".webp";
+        else if (options->format == "gif") path += ".gif";
+        else path += ".jpg";
+
+    } else {
+        // Internal Path -> Use as is
+        // Ensure no ".." traversal, but Reader checks that.
+        // We just append.
+        path += options->source_path;
+    }
+    
+    return path;
+}
+
 ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_log_t *log)
 {
+    // 0. Cache Check
+    std::string cache_path = get_cache_path(options);
+    
+    if (access(cache_path.c_str(), F_OK) == 0) {
+        // Cache Hit
+        if (options->debug) {
+            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache HIT: %s", cache_path.c_str());
+        }
+        
+        std::ifstream file(cache_path, std::ios::binary);
+        if (file) {
+            out_data->assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            return NGX_OK;
+        }
+    } else {
+        if (options->debug) {
+            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache MISS: %s", cache_path.c_str());
+        }
+    }
+
     // 1. Fetch Image (Reader) / 이미지 가져오기
     std::string image_data;
     if (morph_reader_read_source(options, &image_data, log) != NGX_OK) {
@@ -224,6 +331,27 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         
         if (buf && len > 0) {
             out_data->assign(buf, len);
+            
+            // Save to Cache
+            if (ensure_directory(cache_path) == 0) {
+                std::ofstream outfile(cache_path, std::ios::binary);
+                if (outfile) {
+                    outfile.write(buf, len);
+                    outfile.close();
+                    if (options->debug) {
+                        ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache SAVE: %s", cache_path.c_str());
+                    }
+                } else {
+                     if (options->debug) {
+                        ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Error] Cache Write Failed: %s", cache_path.c_str());
+                    }
+                }
+            } else {
+                 if (options->debug) {
+                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Error] Cache Mkdir Failed: %s", cache_path.c_str());
+                }
+            }
+
             g_free(buf); // Vips uses GLib allocs for buffer return
         } else {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;

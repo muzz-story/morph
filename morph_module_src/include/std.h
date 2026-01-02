@@ -55,6 +55,7 @@ typedef struct {
     // Path Mapping
     std::string service_name;
     std::string document_root;
+    std::string raw_options;
 } MorphOptions;
     
 #endif//STD_H
