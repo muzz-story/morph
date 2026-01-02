@@ -1,4 +1,3 @@
-```c++
 #include "std.h"
 #include "ngx_http_morph_image.h"
 #include <curl/curl.h>
@@ -487,4 +486,3 @@ static char* ngx_http_morph( ngx_conf_t* cf, ngx_command_t* cmd, void* conf )
 #ifdef __cplusplus
 }
 #endif
-```

@@ -1,6 +1,6 @@
 TARGET=ngx_http_morph_module
 
-INCDIRS="$ngx_addon_dir/include /usr/local/include /usr/include/glib-2.0 /usr/lib64/glib-2.0/include"
+INCDIRS="$ngx_addon_dir/include /usr/local/include /usr/include /usr/include/glib-2.0 /usr/lib64/glib-2.0/include"
 LIBDIRS="-L/usr/local/lib"
 
 SRCS="$ngx_addon_dir/src/ngx_http_morph_module.cpp \
