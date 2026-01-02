@@ -53,6 +53,16 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
             return NGX_HTTP_FORBIDDEN;
         }
 
+        // Fix truncated slashes (e.g., https:/github.com due to Nginx merge_slashes)
+        // Check for http:/ or https:/ without double slash
+        if (source_path.find("https:/") == 0 && source_path.find("https://") == std::string::npos) {
+            source_path.replace(0, 7, "https://");
+        } else if (source_path.find("http:/") == 0 && source_path.find("http://") == std::string::npos) {
+            source_path.replace(0, 6, "http://");
+        }
+
+        ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Fetching URL: %s", source_path.c_str());
+
         // HTTP/HTTPS Load via Curl
         CURL *curl;
         CURLcode res;
