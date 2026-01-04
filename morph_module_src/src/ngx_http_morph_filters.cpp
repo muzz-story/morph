@@ -1,12 +1,7 @@
+#include "std.h"
 #include "ngx_http_morph_filters.h"
 
-/**
- * morph_filters_apply_blur
- * @description Apply gaussian blur to the image. / 이미지에 가우시안 블러를 적용합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {double} sigma - Blur sigma value. / 블러 강도(sigma).
- * @returns {vips::VImage} - Blurred image. / 블러 처리된 이미지.
- */
+
 /**
  * morph_filters_apply_blur
  * @description Apply gaussian blur to the image. / 이미지에 가우시안 블러를 적용합니다.
@@ -42,7 +37,6 @@ vips::VImage morph_filters_set_background(vips::VImage image, const char *color_
 {
     if (color_hex == NULL || strlen(color_hex) < 6) return image;
 
-    // Remove # if present
     std::string hex_str(color_hex);
     if (hex_str[0] == '#') hex_str = hex_str.substr(1);
 
@@ -52,9 +46,7 @@ vips::VImage morph_filters_set_background(vips::VImage image, const char *color_
     }
 
     std::vector<double> bg = {(double)r, (double)g, (double)b};
-    // If output is to be B/W, we might need 1 value, but flatten usually handles RGB.
-    
-    // vips flatten uses 'background' option which is VipsArrayDouble
+
     return image.flatten(vips::VImage::option()->set("background", bg));
 }
 
@@ -68,7 +60,6 @@ vips::VImage morph_filters_set_background(vips::VImage image, const char *color_
 vips::VImage morph_filters_apply_brightness(vips::VImage image, double brightness)
 {
     if (brightness == 1.0) return image;
-    // Implemented as linear gain (Exposure-like)
     return image.linear(brightness, 0.0);
 }
 
@@ -82,12 +73,6 @@ vips::VImage morph_filters_apply_brightness(vips::VImage image, double brightnes
 vips::VImage morph_filters_apply_contrast(vips::VImage image, double contrast)
 {
     if (contrast == 1.0) return image;
-    // Implemented as CSS-like contrast: (val - 128) * contrast + 128
-    // Assuming 8-bit range mainly. 
-    // formula: val * contrast + (128 - 128 * contrast)
-    // For many VIPS operations, it promotes to float. 
-    // Use 127.5 for midpoint? or 128? 128 is indicated in W3C filters.
-    // Let's use 128.
     return image.linear(contrast, 128.0 * (1.0 - contrast));
 }
 
@@ -102,20 +87,7 @@ vips::VImage morph_filters_apply_contrast(vips::VImage image, double contrast)
 vips::VImage morph_filters_apply_noise(vips::VImage image, int type, double sigma)
 {
     if (sigma <= 0.0) return image;
-    // ignoring type for now, default to gaussnoise
-    // gaussnoise is a static generator in Vips C++ API
-    // VImage gaussnoise(int width, int height, VOption *options = nullptr)
     vips::VImage noise = vips::VImage::gaussnoise(image.width(), image.height(), 
-                                                  vips::VImage::option()->set("sigma", sigma)->set("mean", 0.0));
-    
-    // Convert noise to match image bands if needed, or Vips handles it?
-    // Usually gaussnoise produces 1 band float. Image might be 3 bands uchar.
-    // We add noise to image. Vips auto-expands 1 band to match mult-band image in arithmetic.
-    
-    // Note: The result of uchar + float will be float. We might need to cast back to original format?
-    // But for a processing pipeline, keeping it float and casting later or letting Vips handle save is also fine.
-    // However, to keep it simple and safe for standard pipeline expectation (often expects like-format input/output),
-    // let's just return the addition. Vips will handle the format promotion.
-    
+                                                  vips::VImage::option()->set("sigma", sigma)->set("mean", 0.0));     
     return image + noise;
 }

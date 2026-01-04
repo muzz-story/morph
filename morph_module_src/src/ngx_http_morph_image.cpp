@@ -1,108 +1,41 @@
+#include "std.h"
 #include "ngx_http_morph_image.h"
 #include "ngx_http_morph_reader.h"
 #include "ngx_http_morph_resizer.h"
 #include "ngx_http_morph_filters.h"
+#include "ngx_http_morph_utils.h"
+#include "ngx_http_morph_globals.h"
 
-// Forward declaration of MorphOptions (used in void* cast)
-// In real implementation, include the shared header defining options.
+using namespace MorphUtils;
 
-/**
- * morph_image_process
- * @description Orchestrate the entire image processing flow: Read -> Check Hex -> Resize -> Filter -> Output. / 전체 이미지 처리 흐름을 관리합니다: 읽기 -> Hex 확인 -> 리사이즈 -> 필터 -> 출력.
- * @param {MorphOptions*} options - MorphOptions structure pointer. / MorphOptions 구조체 포인터.
- * @param {std::string*} out_data - Output image data buffer. / 출력 이미지 데이터 버퍼.
- * @param {ngx_log_t*} log - Logger. / 로거.
- * @returns {ngx_int_t} - NGX_OK or error. / 성공 시 NGX_OK 또는 에러.
- */
-#include <sys/stat.h>
-#include <openssl/md5.h>
-#include <iomanip>
-#include <sstream>
-#include <fstream>
-#include <unistd.h>
-
-// Helper: Compute MD5
-static std::string compute_md5(const std::string& str) {
-    unsigned char result[MD5_DIGEST_LENGTH];
-    MD5((unsigned char*)str.c_str(), str.size(), result);
-
-    std::stringstream ss;
-    for(int i = 0; i < MD5_DIGEST_LENGTH; i++) {
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)result[i];
-    }
-    return ss.str();
-}
-
-// Helper: Ensure Directory Exists (Recursive)
-static int ensure_directory(const std::string& path) {
-    std::string current_path;
-    std::string rest = path;
-    
-    // Handle absolute path
-    if (path.length() > 0 && path[0] == '/') {
-        current_path = "/";
-        rest = path.substr(1);
-    }
-    
-    size_t pos = 0;
-    while((pos = rest.find('/')) != std::string::npos) {
-        current_path += rest.substr(0, pos);
-        
-        // mkdir if not exists
-        struct stat st;
-        if (stat(current_path.c_str(), &st) != 0) {
-            if (mkdir(current_path.c_str(), 0755) != 0 && errno != EEXIST) {
-                return -1;
-            }
-        }
-        
-        current_path += "/";
-        rest = rest.substr(pos + 1);
-    }
-    return 0;
-}
-
-// Helper: Get Cache File Path
 std::string morph_image_get_cache_path(MorphOptions* options) {
-    // Structure: [Root]/[Service]/[Options]/[File]
     std::string path = options->document_root;
     if (path.back() != '/') path += "/";
     
     path += options->service_name + "/";
-    path += options->raw_options + "/";
+    std::string safe_opts = sanitize_path(options->raw_options);
+    path += safe_opts + "/";
     
     if (options->source_path.find("http") == 0) {
-        // External URL -> MD5 Hash
-        std::string hash = compute_md5(options->source_path);
-        
-        // Extension from format? or .jpg default?
-        // Cache name should probably include FORMAT or EXTENSION to avoid collision if user changes format via options
-        // But options are in the folder path. So we just need an extension.
-        // Let's deduce extension from source URL or saved format.
-        // Actually, the result format is determined by options->format.
-        // If option has format=png, folder is different (raw_options includes it).
-        // So just file name is needed.
-        // We add ".bin" or extension to be safe.
+        std::string hash = compute_md5(options->source_path);        
         path += hash; 
-        // We append extension later based on output format? 
-        // Or just store as is. Let's append appropriate extension.
+
         if (options->format == "png") path += ".png";
         else if (options->format == "webp") path += ".webp";
         else if (options->format == "gif") path += ".gif";
         else path += ".jpg";
 
     } else {
-        // Internal Path -> Use as is
-        // Ensure no ".." traversal, but Reader checks that.
-        // We just append.
         path += options->source_path;
     }
     
     return path;
 }
 
-ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_log_t *log)
+ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_log_t *log, bool *is_cache_hit, time_t *last_modified)
 {
+    if (is_cache_hit) *is_cache_hit = false;
+    if (last_modified) *last_modified = 0;
     // 0. Cache Check
     std::string cache_path = morph_image_get_cache_path(options);
     bool cache_hit = false;
@@ -119,159 +52,97 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
             
             time_t now = time(NULL);
             if (ttl != -1 && (now - st.st_mtime) > ttl) {
-                // Expired
+                // 만료됨 (Expired)
                 if (options->debug) {
-                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache EXPIRED (Age: %ds, TTL: %ds): %s", (int)(now - st.st_mtime), ttl, cache_path.c_str());
+                    MorphLogger::instance().debug("Cache EXPIRED (Age: %ds, TTL: %ds): %s", (int)(now - st.st_mtime), ttl, cache_path.c_str());
                 }
                 unlink(cache_path.c_str());
-                // Fallthrough to miss
+                // 캐시 미스로 처리 (Fallthrough to miss)
             } else {
-                // Valid Hit
+                // 유효한 히트 (Valid Hit)
                 cache_hit = true;
+                if (last_modified) *last_modified = st.st_mtime;
             }
         }
     }
     
     if (cache_hit) {
-        // Cache Hit
+        // 캐시 히트 (Cache Hit)
         if (options->debug) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache HIT: %s", cache_path.c_str());
+            MorphLogger::instance().debug("Cache HIT: %s", cache_path.c_str());
         }
         
         std::ifstream file(cache_path, std::ios::binary);
         if (file) {
             out_data->assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            if (is_cache_hit) *is_cache_hit = true;
             return NGX_OK;
         }
     } else {
         if (options->debug) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache MISS: %s", cache_path.c_str());
+            MorphLogger::instance().debug("Cache MISS: %s", cache_path.c_str());
         }
     }
 
-    // 1. Fetch Image (Reader) / 이미지 가져오기
+    // 1. 이미지 가져오기 (Fetch Image)
     std::string image_data;
     if (morph_reader_read_source(options, &image_data, log) != NGX_OK) {
         return NGX_HTTP_NOT_FOUND;
     }
 
-    // 2. Validate Hex (Image) / Hex 검증 및 포맷 식별
+    // 2. Hex 검증 및 포맷 식별 (Validate Hex)
     int image_type = MORPH_IMG_UNKNOWN;
     if (morph_image_validate_hex((void*)image_data.data(), image_data.size(), &image_type) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Invalid image format");
         return NGX_HTTP_UNSUPPORTED_MEDIA_TYPE;
     }
 
-    // Log the identified type
+    // 식별된 타입 로그 (Log the identified type)
     if (options->debug) {
-        ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 4. Image Type: %d (1:JPEG, 2:PNG, 3:WEBP, 4:GIF)", image_type);
+        MorphLogger::instance().debug("Image Type Identified: %d (1:JPEG, 2:PNG, 3:WEBP, 4:GIF)", image_type);
     }
 
-    // 3. Create VImage (Loading & Optimizing) / Vips 이미지 로드 및 최적화
+    // 3. VImage 생성 (로드 및 최적화)
     vips::VImage image;
     
     if (options->debug) {
-        ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Loading Image");
+        MorphLogger::instance().debug("Loading Image...");
     }
     
     try {
-        // Optimization: Use thumbnail_buffer for shrink-on-load
-        if (options->width > 0 || options->height > 0) {
-            // If Resize Needed -> Use thumbnail_buffer
-            // Vips thumbnail automatically handles:
-            // - Shrink-on-load (jpeg, webp, etc)
-            // - Autorotate (usually)
-            // - Linear colorspace processing
-            
-            // Construct option string
-            // We need to pass buffer pointer and length
-            // thumbnail_buffer(blob, width, "height", height, ...)
-            
-            // To pass raw buffer without copy, we use a Blob.
-            // But C++ wrapper makes it easier: VImage::thumbnail_buffer(void* data, size_t len, int width, ...)
-            
-            vips::VOption *thumb_opts = vips::VImage::option()->set("no_rotate", false); // Autorotate by default
-            
+        bool use_thumbnail = false;
+
+        if ((options->width > 0 || options->height > 0) && !options->has_crop) {
+             use_thumbnail = true;
+        }
+
+        if (use_thumbnail) {
+            vips::VOption *thumb_opts = vips::VImage::option()->set("no_rotate", false);
             if (options->height > 0) {
                 thumb_opts->set("height", options->height);
-                if (options->width <= 0) {
-                     // Only height set -> aspect ratio preserve logic handled by thumbnail?
-                     // Vips thumbnail requries width.
-                     // If only height is known, we might need to load header first or let vips handle "size" logic.
-                     // Vips thumbnail: "width" is required. "height" is optional.
-                     // If we want height driven, we might need another approach or set width to large?
-                     // Actually vips_thumbnail has "size" option (VIPS_SIZE_DOWN, etc).
-                     
-                     // For simplicity in this mock/stub env:
-                     // If only height is set, we use simple load + resize because thumbnail needs width primarily.
-                     // OR we can guess width.
-                     // Let's stick to: Use thumbnail if width is present.
-                     goto fallback_load; 
-                }
-            } else {
-                 // Only width
-            }
-            
-            // Handle Crop within thumbnail?
-            // "crop" option in thumbnail: VIPS_INTERESTING_NONE (default), _CENTRE, _ENTROPY, _ATTENTION
-            // If we have manual crop (cx,cy,cw,ch), we should NOT let thumbnail crop.
-            // We want thumbnail to "fit" the target box, then we crop manually if needed?
-            // Wait, manual crop comes AFTER resize usually? No, BEFORE resize.
-            // Crop -> Resize.
-            // If we use thumbnail, it does Resize.
-            // So if Crop is needed, we cannot use thumbnail EASILY unless we crop the result (which is incorrect order).
-            
-            // Correct Order: Crop -> Resize.
-            // Vips Thumbnail Order: Load -> Shrink -> Crop(Smart) -> Resize.
-            
-            // Conflict: We have manual Crop coordinates based on ORIGINAL image.
-            // If we use thumbnail, we lose original coordinates mapping.
-            
-            // Conclusion: 
-            // If has_crop is true -> Use standard Load (new_from_buffer) -> Crop -> Resize.
-            // If has_crop is false -> Use thumbnail_buffer (Load + Resize).
-            
-            if (options->has_crop) {
-                goto fallback_load;
-            }
+            }         
 
-            // Safe to use thumbnail
+            int load_width = options->width > 0 ? options->width : 10000;             
             image = vips::VImage::thumbnail_buffer(
                 (void*)image_data.data(), 
                 image_data.size(), 
-                options->width, 
+                load_width, 
                 thumb_opts
             );
             
-            // Since thumbnail already resized, we skip manual resize
-            // We need to mark that resize is done to avoid double resize?
-            // Let's set dimensions to 0 in options so subsequent resize block is skipped.
+            // Mark resize as done
             options->width = 0;
             options->height = 0; 
-
         } else {
-            // No Resize needed -> Simple Load
-            fallback_load:
+            // Fallback: Simple Load
             image = vips::VImage::new_from_buffer(image_data.data(), image_data.size(), "");
         }
         
-        // 4. Resize & Crop (Resizer)
-        
-        // 4. Resize & Crop (Resizer)
-        // Crop first? Or Resize first?
-        // Usually resize then crop if thumbnailing, but here we have explicit ops.
-        // Let's follow: Crop -> Resize -> Rotate/Flip (Geometric) -> Filters
-        // Or user constraints dependent.
-        // Typically: 
-        // 1. Resize (to approximate)
-        // 2. Crop (extract area)
-        // 3. Rotate
-        // 4. Filters
-        
+        // 4. Resize & Crop (Resizer)        
         // Apply Resize
         if (options->width > 0 || options->height > 0) {
             if (options->debug) {
-                ngx_log_error(NGX_LOG_ERR, log, 0, "Morph Debug: Applying Resize: %dx%d", options->width, options->height);
+                MorphLogger::instance().debug("Applying Resize: %dx%d", options->width, options->height);
             }
             image = morph_resizer_resize(image, options->width, options->height);
         }
@@ -334,23 +205,17 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
             format_ext = ".webp";
             save_opts->set("Q", options->quality);
         } else if (options->format == "gif") {
-            format_ext = ".gif"; // Magick save? Vips usually saves gif as animated or static.
+            format_ext = ".gif"; 
         } else {
-            // Default JPG
             format_ext = ".jpg";
             save_opts->set("Q", options->quality);
         }
 
-        // Buffer write
-        // Note: write_to_buffer returns void* buffer and size, wrapper writes to VBuf?
-        // C++ wrapper: write_to_buffer(suffix, options) returns Blob
-        // Actually: void write_to_buffer (const char *suffix, void **buf, size_t *size, VOption *options=0) const
-        
         char *buf = NULL;
         size_t len = 0;
         
         if (options->debug) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 5. Output Location: Memory Buffer (Nginx Caching handled externally). Format: %s", format_ext.c_str());
+            MorphLogger::instance().debug("Output Location: Memory Buffer. Format: %s", format_ext.c_str());
         }
 
         image.write_to_buffer(format_ext.c_str(), (void**)&buf, &len, save_opts);
@@ -358,23 +223,24 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         if (buf && len > 0) {
             out_data->assign(buf, len);
             
-            // Save to Cache
+            // 캐시에 저장 (Save to Cache)
             if (ensure_directory(cache_path) == 0) {
                 std::ofstream outfile(cache_path, std::ios::binary);
                 if (outfile) {
                     outfile.write(buf, len);
                     outfile.close();
                     if (options->debug) {
-                        ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Cache SAVE: %s", cache_path.c_str());
+                        MorphLogger::instance().debug("Cache Saved: %s", cache_path.c_str());
                     }
+                    if (last_modified) *last_modified = time(NULL);
                 } else {
                      if (options->debug) {
-                        ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Error] Cache Write Failed: %s", cache_path.c_str());
+                         MorphLogger::instance().debug("Cache Write Failed: %s", cache_path.c_str());
                     }
                 }
             } else {
                  if (options->debug) {
-                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Error] Cache Mkdir Failed: %s", cache_path.c_str());
+                    MorphLogger::instance().debug("Cache Mkdir Failed: %s", cache_path.c_str());
                 }
             }
 

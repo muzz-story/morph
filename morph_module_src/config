@@ -8,17 +8,26 @@ SRCS="$ngx_addon_dir/src/ngx_http_morph_module.cpp \
       $ngx_addon_dir/src/ngx_http_morph_reader.cpp \
       $ngx_addon_dir/src/ngx_http_morph_resizer.cpp \
       $ngx_addon_dir/src/ngx_http_morph_filters.cpp \
-      $ngx_addon_dir/src/std.cpp"
+      $ngx_addon_dir/src/ngx_http_morph_utils.cpp"
 
-DEPS="$ngx_addon_dir/include/std.h"
+DEPS="$ngx_addon_dir/include/ngx_http_morph_types.h \
+      $ngx_addon_dir/include/ngx_http_morph_globals.h \
+      $ngx_addon_dir/include/ngx_http_morph_utils.h"
 
-LIBS="-lvips-cpp -lvips -lstdc++ -lz -lm -lglib-2.0 -lxml2 -lwebp -lwebpdemux -lwebpmux -ljpeg -lpng -lgobject-2.0 -lopenjp2 -lrsvg-2 -ltiff -lgsf-1 -lfftw3 -limagequant -lcairo -llcms2 -lexif -lorc-0.4 -lIlmImf -lcgif -lcurl"
+VIPS_LIBS=$(pkg-config --libs vips-cpp vips glib-2.0)
+if [ -z "$VIPS_LIBS" ]; then
+    echo "MORPH CONFIG: pkg-config failed, using fallback libs"
+    VIPS_LIBS="-lvips-cpp -lvips -lstdc++ -lz -lm -lglib-2.0 -lxml2 -lwebp -lwebpdemux -lwebpmux -ljpeg -lpng -lgobject-2.0 -lopenjp2 -lrsvg-2 -ltiff -lgsf-1 -lfftw3 -limagequant -lcairo -llcms2 -lexif -lorc-0.4 -lIlmImf -lcgif -lcurl"
+fi
 
-#
+LIBS="$VIPS_LIBS -lcurl"
 
 ngx_addon_name=$TARGET
 
+echo "MORPH CONFIG CHECK: ngx_module_link='$ngx_module_link'"
+
 if test -n "$ngx_module_link"; then
+        echo "MORPH CONFIG: Building as DYNAMIC module"
         ngx_module_type=HTTP
         ngx_module_name=$TARGET
         ngx_module_incs=$INCDIRS
@@ -29,6 +38,7 @@ if test -n "$ngx_module_link"; then
 
         . auto/module
 else
+        echo "MORPH CONFIG: Building as STATIC module"
         HTTP_MODULES="$HTTP_MODULES $TARGET"
         NGX_ADDON_SRCS="$NGX_ADDON_SRCS $SRCS"
 

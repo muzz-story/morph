@@ -1,14 +1,7 @@
 #ifndef NGX_HTTP_MORPH_READER_H
 #define NGX_HTTP_MORPH_READER_H
 
-#include "std.h"
-
-// Forward declaration of MorphOptions to avoid circular dependency if needed.
-// But std.h might not include it. We should assume options are passed or struct is defined common.
-// For now, using void* or specific params, or assuming MorphOptions is available via common header.
-// Let's create a common header for types later or put types in reader for now? 
-// No, types should likely be in std.h or a types.h. 
-// For this stub, I will just reference vips/nginx types.
+#include "ngx_http_morph_types.h"
 
 /**
  * morph_reader_read_source

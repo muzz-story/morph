@@ -1,7 +1,7 @@
 #ifndef NGX_HTTP_MORPH_RESIZER_H
 #define NGX_HTTP_MORPH_RESIZER_H
 
-#include "std.h"
+#include "ngx_http_morph_types.h"
 
 /**
  * morph_resizer_resize

@@ -1,5 +1,8 @@
+#include "std.h"
 #include "ngx_http_morph_reader.h"
-#include <curl/curl.h>
+#include "ngx_http_morph_types.h"
+#include "ngx_http_morph_globals.h"
+#include "ngx_http_morph_utils.h"
 
 // Internal curl write callback
 static size_t curl_write_to_string(void *ptr, size_t size, size_t nmemb, void *stream) {
@@ -13,10 +16,7 @@ static size_t curl_write_to_string(void *ptr, size_t size, size_t nmemb, void *s
 static size_t curl_header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
     size_t numbytes = size * nitems;
     std::string *out_buffer = (std::string *)userdata;
-    
-    // Check for Content-Length
-    // Format: "Content-Length: 12345"
-    // We do rough parsing
+
     std::string line(buffer, numbytes);
     if (line.find("Content-Length:") == 0) {
         size_t pos = line.find_first_of("0123456789");
@@ -32,24 +32,18 @@ static size_t curl_header_cb(char *buffer, size_t size, size_t nitems, void *use
 
 /**
  * morph_reader_read_source
- * @description Read raw image data from local or remote source. / 로컬 또는 원격 소스에서 원시 이미지 데이터를 읽어옵니다.
- * @param {MorphOptions*} options - Image options containing path info. / 경로 정보를 포함한 이미지 옵션.
- * @param {std::string*} out_buffer - Buffer to store read data. / 읽은 데이터를 저장할 버퍼.
- * @param {ngx_log_t*} log - Logger. / 로거.
- * @returns {ngx_int_t} - NGX_OK or error code. / 성공 시 NGX_OK 또는 에러 코드.
+ * @description 로컬 또는 원격 소스에서 원시 이미지 데이터를 읽어옵니다.
+ * @param {MorphOptions*} options - 경로 정보를 포함한 이미지 옵션.
+ * @param {std::string*} out_buffer - 읽은 데이터를 저장할 버퍼.
+ * @param {ngx_log_t*} log - 로거.
+ * @returns {ngx_int_t} - 성공 시 NGX_OK 또는 에러 코드.
  */
 ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffer, ngx_log_t *log)
 {
     std::string source_path = options->source_path;
-
-    // Failover Logic
     std::vector<std::string> try_urls;
 
     if (source_path.find("http") == 0) {
-        // Absolute URL -> Single Attempt
-        // Security checks and slash fixes applied above
-        
-        // SSRF Check: Basic String Check (Robust check requires DNS resolution)
         if (source_path.find("localhost") != std::string::npos ||
             source_path.find("127.") != std::string::npos ||
             source_path.find("192.168.") != std::string::npos ||
@@ -59,8 +53,6 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
             return NGX_HTTP_FORBIDDEN;
         }
 
-        // Fix truncated slashes (e.g., https:/github.com due to Nginx merge_slashes)
-        // Check for http:/ or https:/ without double slash
         if (source_path.find("https:/") == 0 && source_path.find("https://") == std::string::npos) {
             source_path.replace(0, 7, "https://");
         } else if (source_path.find("http:/") == 0 && source_path.find("http://") == std::string::npos) {
@@ -70,18 +62,14 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
         try_urls.push_back(source_path);
 
     } else {
-        // Relative Path -> Multi-Source Failover
-        // Security Check: Path Traversal
         if (source_path.find("..") != std::string::npos) {
             ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Security detected path traversal attempt: %s", source_path.c_str());
             return NGX_HTTP_FORBIDDEN;
         }
         
-        // Find Service Config
         if (g_morph_services.find(options->service_name) != g_morph_services.end()) {
             MorphServiceConfig& svc = g_morph_services[options->service_name];
             
-            // Generate full URLs from base sources
             for (size_t i=0; i<svc.sources.size(); i++) {
                 std::string base = svc.sources[i];
                 if (base.back() != '/' && source_path.front() != '/') base += "/";
@@ -89,19 +77,13 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
             }
         }
         
-        // If no sources defined, maybe local file fallback?
-        // Current implementation assumes local file if no http protocol.
-        // But with multi-source config, user might want to fallback to local?
-        // Or if sources is empty, use local file read?
-        
         if (try_urls.empty()) {
-            // No Sources configured -> Fallback to Local Directory Read
              std::string full_path = options->document_root;
             if (!full_path.empty() && full_path.back() != '/') full_path += "/";
             full_path += options->service_name + "/" + source_path;
             
             if (options->debug) {
-                 ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 2. Source Type: Local Read - %s", full_path.c_str());
+                 MorphLogger::instance().debug("Source Type: Local Read - %s", full_path.c_str());
             }
 
             FILE *fp = fopen(full_path.c_str(), "rb");
@@ -123,15 +105,13 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
         }
     }
 
-    // Process Fetch List
     for (size_t i=0; i<try_urls.size(); i++) {
         std::string target_url = try_urls[i];
         
         if (options->debug) {
-            ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 2. Source Type: URL Fetch (Attempt %d/%d) - %s", i+1, try_urls.size(), target_url.c_str());
+            MorphLogger::instance().debug("Source Type: URL Fetch (Attempt %d/%d) - %s", i+1, try_urls.size(), target_url.c_str());
         }
 
-        // Curl
         CURL *curl = curl_easy_init();
         if(curl) {
             curl_easy_setopt(curl, CURLOPT_URL, target_url.c_str());
@@ -151,25 +131,19 @@ ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffe
             
             if (res == CURLE_OK && http_code >= 200 && http_code < 300) {
                 if (options->debug) {
-                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] 3. Download Success: %lu bytes", out_buffer->size());
+                    MorphLogger::instance().debug("Download Success: %lu bytes (from %s)", out_buffer->size(), target_url.c_str());
                 }
-                return NGX_OK; // Success
+                return NGX_OK; 
             } else {
                  if (options->debug) {
-                    ngx_log_error(NGX_LOG_ERR, log, 0, "[Morph Info] Download Failed (Code: %d, HTTP: %ld). Trying next...", res, http_code);
+                    MorphLogger::instance().debug("Download Failed (Code: %d, HTTP: %ld). Trying next...", res, http_code);
                 }
-                out_buffer->clear(); // Clear for next attempt
+                out_buffer->clear();
             }
         }
     }
 
-    return NGX_HTTP_NOT_FOUND; // All failed
-
-    if (out_buffer->empty()) {
-        return NGX_HTTP_NOT_FOUND;
-    }
-
-    return NGX_OK;
+    return NGX_HTTP_NOT_FOUND; 
 }
 
 /**

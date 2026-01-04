@@ -1,7 +1,7 @@
 #ifndef NGX_HTTP_MORPH_FILTERS_H
 #define NGX_HTTP_MORPH_FILTERS_H
 
-#include "std.h"
+#include "ngx_http_morph_types.h"
 
 /**
  * morph_filters_apply_blur

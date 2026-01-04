@@ -1,3 +1,4 @@
+#include "std.h"
 #include "ngx_http_morph_resizer.h"
 
 /**
@@ -19,10 +20,6 @@ vips::VImage morph_resizer_resize(vips::VImage image, int width, int height)
     int input_h = image.height();
 
     if (width > 0 && height > 0) {
-        // Distort/Stretch to fit? Or Fit within?
-        // Let's assume standard behavior: strict resize (distort) if both are forced,
-        // unless we want to keep aspect ratio.
-        // For now, let's calculate scales independently to match target exactly.
         scale = (double)width / input_w;
         vscale = (double)height / input_h;
         
@@ -51,7 +48,6 @@ vips::VImage morph_resizer_crop(vips::VImage image, int cx, int cy, int cw, int 
     int img_w = image.width();
     int img_h = image.height();
 
-    // Boundary Validation
     if (cx < 0) cx = 0;
     if (cy < 0) cy = 0;
     if (cw <= 0) cw = img_w;
@@ -71,20 +67,14 @@ vips::VImage morph_resizer_crop(vips::VImage image, int cx, int cy, int cw, int 
  */
 vips::VImage morph_resizer_rotate(vips::VImage image, double angle)
 {
-    // Normalize angle to 0-360
     while(angle < 0) angle += 360;
     while(angle >= 360) angle -= 360;
 
-    if (angle == 0.0) return image;
-    
-    // Check for 90 degree increments
+    if (angle == 0.0) return image;    
     if (angle == 90.0) return image.rot(VIPS_ANGLE_D90);
     if (angle == 180.0) return image.rot(VIPS_ANGLE_D180);
     if (angle == 270.0) return image.rot(VIPS_ANGLE_D270);
 
-    // Arbitrary rotation
-    // Note: similarity rotates about 0,0 (top left). We might want center rotation.
-    // But basic similarity usage:
     return image.similarity(vips::VImage::option()->set("angle", angle));
 }
 
