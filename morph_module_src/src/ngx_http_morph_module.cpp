@@ -380,7 +380,20 @@ static ngx_int_t parse_options(const std::string& segment, MorphOptions& opts) {
             
             if (!valid_key) return NGX_ERROR;
 
+        } else if (part[0] == 'G') {
+             // Gravity: _G(top)
+             if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
+             std::string val = part.substr(2, part.size() - 3);
+             
+             if (val == "ctr" || val == "center") opts.gravity = MORPH_GRAVITY_CENTER;
+             else if (val == "top" || val == "north") opts.gravity = MORPH_GRAVITY_TOP;
+             else if (val == "bottom" || val == "south") opts.gravity = MORPH_GRAVITY_BOTTOM;
+             else if (val == "left" || val == "west") opts.gravity = MORPH_GRAVITY_LEFT;
+             else if (val == "right" || val == "east") opts.gravity = MORPH_GRAVITY_RIGHT;
+             else return NGX_ERROR;
+
         } else if (isdigit(part[0])) {
+            // Assume Dimension: 200x300
             int w = 0, h = 0;
             if (sscanf(part.c_str(), "%dx%d", &w, &h) != 2) return NGX_ERROR;
             opts.width = w;
@@ -423,6 +436,18 @@ static ngx_int_t parse_options(const std::string& segment, MorphOptions& opts) {
             else if (key == "noise" && !val.empty()) { opts.noise_sigma = std::stod(val); valid_key = true; }
             
             if (!valid_key) return NGX_ERROR;
+
+        } else if (part[0] == 'G') {
+             // Gravity: _G(top)
+             if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
+             std::string val = part.substr(2, part.size() - 3);
+             
+             if (val == "ctr" || val == "center") opts.gravity = MORPH_GRAVITY_CENTER;
+             else if (val == "top" || val == "north") opts.gravity = MORPH_GRAVITY_TOP;
+             else if (val == "bottom" || val == "south") opts.gravity = MORPH_GRAVITY_BOTTOM;
+             else if (val == "left" || val == "west") opts.gravity = MORPH_GRAVITY_LEFT;
+             else if (val == "right" || val == "east") opts.gravity = MORPH_GRAVITY_RIGHT;
+             else return NGX_ERROR;
 
         } else if (isdigit(part[0])) {
              int w = 0, h = 0;

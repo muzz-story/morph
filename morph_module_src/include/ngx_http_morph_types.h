@@ -3,14 +3,28 @@
 
 #include "std.h"
 
+// Gravity Constants
+#define MORPH_GRAVITY_CENTER 0
+#define MORPH_GRAVITY_TOP    1
+#define MORPH_GRAVITY_BOTTOM 2
+#define MORPH_GRAVITY_LEFT   3
+#define MORPH_GRAVITY_RIGHT  4
+
+// 이미지 처리 옵션 (Image Process Options)
 typedef struct {
     int width = 0;
     int height = 0;
     bool debug = false;
     
-    // 크롭 (Crop)
-    int cw = 0, ch = 0, cx = 0, cy = 0;
-    bool has_crop = false;
+    // Crop Settings
+    bool has_crop = false; // Manual Crop (Cx, Cy, Cw, Ch)
+    int cx = 0;
+    int cy = 0;
+    int cw = 0;
+    int ch = 0;
+
+    // Smart Crop / Resize Settings
+    int gravity = MORPH_GRAVITY_CENTER; // For "Cover" resize strategy if no manual crop
 
     // 필터 (Filters)
     std::string bg_color;

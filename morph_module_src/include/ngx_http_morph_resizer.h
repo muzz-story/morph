@@ -14,6 +14,17 @@
 vips::VImage morph_resizer_resize(vips::VImage image, int width, int height);
 
 /**
+ * morph_resizer_resize_smart
+ * @description Smart resize and crop the image to specified dimensions with gravity. / 이미지를 지정된 크기로 스마트 리사이즈 및 중력 기반 자르기를 수행합니다.
+ * @param {vips::VImage} image - Input image. / 입력 이미지.
+ * @param {int} width - Target width. / 목표 너비.
+ * @param {int} height - Target height. / 목표 높이.
+ * @param {int} gravity - Gravity for smart crop (e.g., VIPS_GRAVITY_CENTRE). / 스마트 자르기를 위한 중력 (예: VIPS_GRAVITY_CENTRE).
+ * @returns {vips::VImage} - Resized and cropped image. / 리사이즈 및 잘린 이미지.
+ */
+vips::VImage morph_resizer_resize_smart(vips::VImage image, int width, int height, int gravity);
+
+/**
  * morph_resizer_crop
  * @description Crop the image to specified area. / 이미지를 지정된 영역으로 자릅니다.
  * @param {vips::VImage} image - Input image. / 입력 이미지.

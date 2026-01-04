@@ -139,12 +139,25 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         }
         
         // 4. Resize & Crop (Resizer)        
-        // Apply Resize
+        // Apply Resize / Smart Crop
         if (options->width > 0 || options->height > 0) {
-            if (options->debug) {
-                MorphLogger::instance().debug("Applying Resize: %dx%d", options->width, options->height);
+            if (options->has_crop) {
+                // Manual Crop Case: Resize then Manual Crop?
+                // Standard behavior: Resize to target, then manual crop relative to that?
+                // Or: Manual crop first, then resize?
+                // Current legacy logic: "Resize" usually means scale.
+                // Let's keep original simple resize if manual crop is present.
+                 if (options->debug) {
+                    MorphLogger::instance().debug("Applying Simple Resize (Manual Crop waiting): %dx%d", options->width, options->height);
+                }
+                image = morph_resizer_resize(image, options->width, options->height);
+            } else {
+                // Smart Crop (Gravity)
+                if (options->debug) {
+                    MorphLogger::instance().debug("Applying Smart Resize (Gravity %d): %dx%d", options->gravity, options->width, options->height);
+                }
+                image = morph_resizer_resize_smart(image, options->width, options->height, options->gravity);
             }
-            image = morph_resizer_resize(image, options->width, options->height);
         }
 
         // Apply Crop
