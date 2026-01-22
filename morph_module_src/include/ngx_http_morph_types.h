@@ -9,6 +9,10 @@
 #define MORPH_GRAVITY_BOTTOM 2
 #define MORPH_GRAVITY_LEFT   3
 #define MORPH_GRAVITY_RIGHT  4
+#define MORPH_GRAVITY_TOP_LEFT 5
+#define MORPH_GRAVITY_TOP_RIGHT 6
+#define MORPH_GRAVITY_BOTTOM_LEFT 7
+#define MORPH_GRAVITY_BOTTOM_RIGHT 8
 
 // 이미지 처리 옵션 (Image Process Options)
 typedef struct {
@@ -41,6 +45,16 @@ typedef struct {
     double contrast = 1.0;
     double noise_sigma = 0.0;
     int noise_type = 0;
+
+    // Sharpen Filter
+    double sharpen_sigma = 0.0;
+
+    // Watermark
+    std::string watermark_path;
+    int watermark_gravity = MORPH_GRAVITY_CENTER;
+    double watermark_opacity = 1.0;
+    int watermark_x_offset = 0;
+    int watermark_y_offset = 0;
     
     // 원본 경로 (Source)
     std::string source_path;

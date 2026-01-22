@@ -57,4 +57,16 @@ vips::VImage morph_filters_apply_contrast(vips::VImage image, double contrast);
  */
 vips::VImage morph_filters_apply_noise(vips::VImage image, int type, double sigma);
 
+/**
+ * morph_filters_apply_sharpen
+ * @description Apply sharpen filter.
+ */
+vips::VImage morph_filters_apply_sharpen(vips::VImage image, double sigma);
+
+/**
+ * morph_filters_apply_watermark
+ * @description Apply watermark image.
+ */
+vips::VImage morph_filters_apply_watermark(vips::VImage image, MorphOptions *options);
+
 #endif

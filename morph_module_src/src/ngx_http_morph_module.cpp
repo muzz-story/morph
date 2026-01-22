@@ -25,30 +25,8 @@ typedef struct {
     ngx_flag_t  debug;
 } ngx_http_morph_loc_conf_t;
 
-/**
- * ngx_http_morph
- * @description Initialize the module and link handler. / 모듈을 초기화하고 핸들러를 연결합니다.
- * @param {ngx_conf_t*} cf - Configuration context. / 설정 컨텍스트.
- * @param {ngx_command_t*} cmd - Command structure. / 명령어 구조체.
- * @param {void*} conf - Custom configuration. / 사용자 정의 설정.
- * @returns {char*} - NGX_CONF_OK. / 성공 시 NGX_CONF_OK 반환.
- */
 static char* ngx_http_morph( ngx_conf_t* cf, ngx_command_t* cmd, void* conf );
-/**
- * ngx_http_morph_create_loc_conf
- * @description Create location configuration structure. / Location 설정 구조체를 생성합니다.
- * @param {ngx_conf_t*} cf - Configuration context. / 설정 컨텍스트.
- * @returns {void*} - Created configuration structure. / 생성된 설정 구조체.
- */
 static void* ngx_http_morph_create_loc_conf(ngx_conf_t *cf);
-/**
- * ngx_http_morph_merge_loc_conf
- * @description Merge location configurations. / Location 설정을 병합합니다.
- * @param {ngx_conf_t*} cf - Configuration context. / 설정 컨텍스트.
- * @param {void*} parent - Parent configuration. / 부모 설정.
- * @param {void*} child - Child configuration. / 자식 설정.
- * @returns {char*} - NGX_CONF_OK or error. / 성공 시 NGX_CONF_OK 반환.
- */
 static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 
 static ngx_command_t ngx_http_morph_commands[] = 
@@ -134,23 +112,14 @@ static ngx_http_module_t ngx_http_morph_module_ctx =
 {
     NULL,                                                   /* preconfiguration */
     NULL,                                                   /* postconfiguration */
-
     NULL,                                                   /* create main configuration */
     NULL,                                                   /* init main configuration */
-
     NULL,                                                   /* create server configuration */
     NULL,                                                   /* merge server configuration */
-
     ngx_http_morph_create_loc_conf,                         /* create location configuration */
     ngx_http_morph_merge_loc_conf                           /* merge location configuration */
 };
 
-/**
- * ngx_http_morph_init_process
- * @description Initialize worker process (Libvips, Curl). / 워커 프로세스를 초기화합니다.
- * @param {ngx_cycle_t*} cycle - Nginx cycle object. / Nginx 사이클 객체.
- * @returns {ngx_int_t} - NGX_OK or error. / 성공 시 NGX_OK 반환.
- */
 static ngx_int_t ngx_http_morph_init_process(ngx_cycle_t *cycle)
 {
     if (curl_global_init(CURL_GLOBAL_ALL) != 0) {
@@ -253,12 +222,6 @@ ngx_module_t ngx_http_morph_module =
     NGX_MODULE_V1_PADDING
 };
 
-/**
- * ngx_http_morph_create_loc_conf
- * @description Create location configuration structure. / Location 설정 구조체를 생성합니다.
- * @param {ngx_conf_t*} cf - Configuration context. / 설정 컨텍스트.
- * @returns {void*} - Created configuration structure. / 생성된 설정 구조체.
- */
 static void* ngx_http_morph_create_loc_conf(ngx_conf_t *cf)
 {
     ngx_http_morph_loc_conf_t *conf;
@@ -280,14 +243,6 @@ static void* ngx_http_morph_create_loc_conf(ngx_conf_t *cf)
     return conf;
 }
 
-/**
- * ngx_http_morph_merge_loc_conf
- * @description Merge location configurations. / Location 설정을 병합합니다.
- * @param {ngx_conf_t*} cf - Configuration context. / 설정 컨텍스트.
- * @param {void*} parent - Parent configuration. / 부모 설정.
- * @param {void*} child - Child configuration. / 자식 설정.
- * @returns {char*} - NGX_CONF_OK or error. / 성공 시 NGX_CONF_OK 반환.
- */
 static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 {
     ngx_http_morph_loc_conf_t *prev = (ngx_http_morph_loc_conf_t *)parent;
@@ -337,139 +292,135 @@ static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *c
     return NGX_CONF_OK;
 }
 
-/**
- * parse_options
- * @description Parse the URL option segment to extract image processing parameters. / URL 옵션 세그먼트를 파싱하여 이미지 처리 파라미터를 추출합니다.
- * @param {const std::string&} segment - The option segment string (e.g., "200x300_C10,10,10,20"). / 옵션 문자열.
- * @param {MorphOptions&} opts - The structure to store parsed options. / 파싱된 옵션을 저장할 구조체.
- * @returns {ngx_int_t} - NGX_OK on success, NGX_ERROR on validation failure.
- */
-static ngx_int_t parse_options(const std::string& segment, MorphOptions& opts) {
-    size_t start = 0;
-    size_t end = segment.find('_');
+// ------------------------------------------------------------------
+// Parsing Helpers (Refactoring)
+// ------------------------------------------------------------------
+
+static ngx_int_t parse_crop(const std::string& part, MorphOptions& opts) {
+    if (sscanf(part.c_str(), "C%d,%d,%d,%d", &opts.cx, &opts.cy, &opts.cw, &opts.ch) != 4) return NGX_ERROR;
+    opts.has_crop = true;
+    return NGX_OK;
+}
+
+static ngx_int_t parse_watermark(const std::string& part, MorphOptions& opts) {
+    if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
+    std::string content = part.substr(2, part.size() - 3);
     
-    while (end != std::string::npos) {
-        std::string part = segment.substr(start, end - start);
-        
-        if (part[0] == 'C') {
-             if (sscanf(part.c_str(), "C%d,%d,%d,%d", &opts.cx, &opts.cy, &opts.cw, &opts.ch) != 4) return NGX_ERROR;
-             opts.has_crop = true;
-        } else if (part[0] == 'F') {
-            if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
+    std::stringstream ss(content);
+    std::string item;
+    while(std::getline(ss, item, ',')) {
+        size_t colon = item.find(':');
+        if (colon != std::string::npos) {
+            std::string k = item.substr(0, colon);
+            std::string v = item.substr(colon+1);
             
-            std::string content = part.substr(2, part.size() - 3);
-            size_t colon_pos = content.find(':');
-            std::string key = (colon_pos == std::string::npos) ? content : content.substr(0, colon_pos);
-            std::string val = (colon_pos == std::string::npos) ? "" : content.substr(colon_pos + 1);
-
-            bool valid_key = false;
-            if (key == "bakground_color" || key == "background_color") { opts.bg_color = val; valid_key = true; }
-            else if (key == "blur" && !val.empty()) { opts.blur_sigma = std::stod(val); valid_key = true; }
-            else if (key == "format") { opts.format = val; valid_key = true; }
-            else if (key == "grayscale") { opts.grayscale = true; valid_key = true; }
-            else if (key == "quality" && !val.empty()) { opts.quality = std::stoi(val); valid_key = true; }
-            else if (key == "rotate" && !val.empty()) { opts.rotate_angle = std::stod(val); valid_key = true; }
-            else if (key == "flip") {
-                opts.flip = true;
-                opts.flip_dir = (val == "h") ? 1 : 0;
-                valid_key = true;
+            if (k == "path") opts.watermark_path = sanitize_path(v);
+            else if (k == "o" || k == "opacity") opts.watermark_opacity = std::stod(v);
+            else if (k == "x") opts.watermark_x_offset = std::stoi(v);
+            else if (k == "y") opts.watermark_y_offset = std::stoi(v);
+            else if (k == "g") {
+                if (v == "c" || v == "center") opts.watermark_gravity = MORPH_GRAVITY_CENTER;
+                else if (v == "nw" || v == "tl") opts.watermark_gravity = MORPH_GRAVITY_TOP_LEFT;
+                else if (v == "n" || v == "top") opts.watermark_gravity = MORPH_GRAVITY_TOP;
+                else if (v == "ne" || v == "tr") opts.watermark_gravity = MORPH_GRAVITY_TOP_RIGHT;
+                else if (v == "w" || v == "left") opts.watermark_gravity = MORPH_GRAVITY_LEFT;
+                else if (v == "e" || v == "right") opts.watermark_gravity = MORPH_GRAVITY_RIGHT;
+                else if (v == "sw" || v == "bl") opts.watermark_gravity = MORPH_GRAVITY_BOTTOM_LEFT;
+                else if (v == "s" || v == "bottom") opts.watermark_gravity = MORPH_GRAVITY_BOTTOM;
+                else if (v == "se" || v == "br") opts.watermark_gravity = MORPH_GRAVITY_BOTTOM_RIGHT;
             }
-            else if (key == "brightness" && !val.empty()) { opts.brightness = std::stod(val); valid_key = true; }
-            else if (key == "contrast" && !val.empty()) { opts.contrast = std::stod(val); valid_key = true; }
-            else if (key == "noise" && !val.empty()) { opts.noise_sigma = std::stod(val); valid_key = true; }
-            
-            if (!valid_key) return NGX_ERROR;
-
-        } else if (part[0] == 'G') {
-             // Gravity: _G(top)
-             if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
-             std::string val = part.substr(2, part.size() - 3);
-             
-             if (val == "ctr" || val == "center") opts.gravity = MORPH_GRAVITY_CENTER;
-             else if (val == "top" || val == "north") opts.gravity = MORPH_GRAVITY_TOP;
-             else if (val == "bottom" || val == "south") opts.gravity = MORPH_GRAVITY_BOTTOM;
-             else if (val == "left" || val == "west") opts.gravity = MORPH_GRAVITY_LEFT;
-             else if (val == "right" || val == "east") opts.gravity = MORPH_GRAVITY_RIGHT;
-             else return NGX_ERROR;
-
-        } else if (isdigit(part[0])) {
-            // Assume Dimension: 200x300
-            int w = 0, h = 0;
-            if (sscanf(part.c_str(), "%dx%d", &w, &h) != 2) return NGX_ERROR;
-            opts.width = w;
-            opts.height = h;
-        } else {
-            return NGX_ERROR;
-        }
-
-        start = end + 1;
-        end = segment.find('_', start);
-    }
-    
-    std::string part = segment.substr(start);
-    if (!part.empty()) {
-        if (part[0] == 'C') { 
-             if (sscanf(part.c_str(), "C%d,%d,%d,%d", &opts.cx, &opts.cy, &opts.cw, &opts.ch) != 4) return NGX_ERROR;
-             opts.has_crop = true;
-        } else if (part[0] == 'F') {
-            if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
-
-             std::string content = part.substr(2, part.size() - 3);
-            size_t colon_pos = content.find(':');
-            std::string key = (colon_pos == std::string::npos) ? content : content.substr(0, colon_pos);
-            std::string val = (colon_pos == std::string::npos) ? "" : content.substr(colon_pos + 1);
-
-            bool valid_key = false;
-            if (key == "bakground_color" || key == "background_color") { opts.bg_color = val; valid_key = true; }
-            else if (key == "blur" && !val.empty()) { opts.blur_sigma = std::stod(val); valid_key = true; }
-            else if (key == "format") { opts.format = val; valid_key = true; }
-            else if (key == "grayscale") { opts.grayscale = true; valid_key = true; }
-            else if (key == "quality" && !val.empty()) { opts.quality = std::stoi(val); valid_key = true; }
-            else if (key == "rotate" && !val.empty()) { opts.rotate_angle = std::stod(val); valid_key = true; }
-            else if (key == "flip") {
-                opts.flip = true;
-                opts.flip_dir = (val == "h") ? 1 : 0;
-                valid_key = true;
-            }
-            else if (key == "brightness" && !val.empty()) { opts.brightness = std::stod(val); valid_key = true; }
-            else if (key == "contrast" && !val.empty()) { opts.contrast = std::stod(val); valid_key = true; }
-            else if (key == "noise" && !val.empty()) { opts.noise_sigma = std::stod(val); valid_key = true; }
-            
-            if (!valid_key) return NGX_ERROR;
-
-        } else if (part[0] == 'G') {
-             // Gravity: _G(top)
-             if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
-             std::string val = part.substr(2, part.size() - 3);
-             
-             if (val == "ctr" || val == "center") opts.gravity = MORPH_GRAVITY_CENTER;
-             else if (val == "top" || val == "north") opts.gravity = MORPH_GRAVITY_TOP;
-             else if (val == "bottom" || val == "south") opts.gravity = MORPH_GRAVITY_BOTTOM;
-             else if (val == "left" || val == "west") opts.gravity = MORPH_GRAVITY_LEFT;
-             else if (val == "right" || val == "east") opts.gravity = MORPH_GRAVITY_RIGHT;
-             else return NGX_ERROR;
-
-        } else if (isdigit(part[0])) {
-             int w = 0, h = 0;
-            if (sscanf(part.c_str(), "%dx%d", &w, &h) != 2) return NGX_ERROR;
-            opts.width = w;
-            opts.height = h;
-        } else {
-             return NGX_ERROR;
         }
     }
     return NGX_OK;
 }
 
+static ngx_int_t parse_single_filter(const std::string& key, const std::string& val, MorphOptions& opts) {
+    if (key == "bakground_color" || key == "background_color") { opts.bg_color = val; }
+    else if (key == "blur" && !val.empty()) { opts.blur_sigma = std::stod(val); }
+    else if (key == "sharpen" && !val.empty()) { opts.sharpen_sigma = std::stod(val); }
+    else if (key == "format") { opts.format = val; }
+    else if (key == "grayscale") { opts.grayscale = true; }
+    else if (key == "quality" && !val.empty()) { opts.quality = std::stoi(val); }
+    else if (key == "rotate" && !val.empty()) { opts.rotate_angle = std::stod(val); }
+    else if (key == "flip") {
+        opts.flip = true;
+        opts.flip_dir = (val == "h") ? 1 : 0;
+    }
+    else if (key == "brightness" && !val.empty()) { opts.brightness = std::stod(val); }
+    else if (key == "contrast" && !val.empty()) { opts.contrast = std::stod(val); }
+    else if (key == "noise" && !val.empty()) { opts.noise_sigma = std::stod(val); }
+    else { return NGX_ERROR; } 
+    return NGX_OK;
+}
+
+static ngx_int_t parse_filter(const std::string& part, MorphOptions& opts) {
+    if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
+
+    std::string content = part.substr(2, part.size() - 3);
+    size_t colon_pos = content.find(':');
+    std::string key = (colon_pos == std::string::npos) ? content : content.substr(0, colon_pos);
+    std::string val = (colon_pos == std::string::npos) ? "" : content.substr(colon_pos + 1);
+
+    return parse_single_filter(key, val, opts);
+}
+
+static ngx_int_t parse_gravity(const std::string& part, MorphOptions& opts) {
+    if (part.size() <= 3 || part[1] != '(' || part.back() != ')') return NGX_ERROR;
+    std::string val = part.substr(2, part.size() - 3);
+    
+    if (val == "ctr" || val == "center") opts.gravity = MORPH_GRAVITY_CENTER;
+    else if (val == "top" || val == "north") opts.gravity = MORPH_GRAVITY_TOP;
+    else if (val == "bottom" || val == "south") opts.gravity = MORPH_GRAVITY_BOTTOM;
+    else if (val == "left" || val == "west") opts.gravity = MORPH_GRAVITY_LEFT;
+    else if (val == "right" || val == "east") opts.gravity = MORPH_GRAVITY_RIGHT;
+    else return NGX_ERROR;
+    
+    return NGX_OK;
+}
+
+static ngx_int_t parse_dimension(const std::string& part, MorphOptions& opts) {
+    int w = 0, h = 0;
+    if (sscanf(part.c_str(), "%dx%d", &w, &h) != 2) return NGX_ERROR;
+    opts.width = w;
+    opts.height = h;
+    return NGX_OK;
+}
+
 /**
- * curl_write_cb
- * @description Callback function for libcurl to write received data into a vector. / Libcurl이 데이터를 수신했을 때 벡터에 저장하기 위한 콜백 함수입니다.
- * @param {void*} ptr - Pointer to the received data. / 수신된 데이터 포인터.
- * @param {size_t} size - Size of one data element. / 데이터 요소의 크기.
- * @param {size_t} nmemb - Number of elements. / 요소의 개수.
- * @param {void*} stream - User-defined stream pointer (std::vector<char>*). / 사용자 정의 스트림 포인터.
- * @returns {size_t} - Number of bytes processed. / 처리된 바이트 수.
+ * parse_options
+ * @description Parse the URL option segment to extract image processing parameters. / URL 옵션 세그먼트를 파싱하여 이미지 처리 파라미터를 추출합니다.
  */
+static ngx_int_t parse_options(const std::string& segment, MorphOptions& opts) {
+    size_t start = 0;
+    size_t end = segment.find('_');
+    
+    while (true) {
+        std::string part;
+        if (end == std::string::npos) {
+            part = segment.substr(start);
+        } else {
+            part = segment.substr(start, end - start);
+        }
+
+        if (!part.empty()) {
+            ngx_int_t res = NGX_OK;
+            if (part[0] == 'C') res = parse_crop(part, opts);
+            else if (part[0] == 'W') res = parse_watermark(part, opts);
+            else if (part[0] == 'F') res = parse_filter(part, opts);
+            else if (part[0] == 'G') res = parse_gravity(part, opts);
+            else if (isdigit(part[0])) res = parse_dimension(part, opts);
+            else res = NGX_ERROR;
+
+            if (res != NGX_OK) return res;
+        }
+
+        if (end == std::string::npos) break;
+        start = end + 1;
+        end = segment.find('_', start);
+    }
+    return NGX_OK;
+}
+
 size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *stream) {
     std::vector<char> *data = (std::vector<char> *)stream;
     size_t count = size * nmemb;
@@ -572,9 +523,6 @@ static void morph_thread_completion(ngx_event_t *ev)
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = len;
-
-    r->headers_out.status = NGX_HTTP_OK;
-    r->headers_out.content_length_n = len;
     
     if (ctx->last_modified > 0) {
         r->headers_out.last_modified_time = ctx->last_modified;
@@ -604,12 +552,6 @@ static void morph_thread_completion(ngx_event_t *ev)
     ngx_http_finalize_request(r, NGX_HTTP_OK);
 }
 
-/**
- * ngx_http_morph_handler
- * @description Main request handler to process image transformation requests. / 이미지 변환 요청을 처리하는 메인 핸들러입니다.
- * @param {ngx_http_request_t*} r - The Nginx request structure. / Nginx 요청 구조체.
- * @returns {ngx_int_t} - HTTP status code or Nginx return code. / HTTP 상태 코드 또는 Nginx 반환 코드.
- */
 static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
 {
     ngx_http_morph_loc_conf_t *cf;
@@ -689,8 +631,6 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     ctx->options.noise_sigma = 0.0;
     ctx->options.flip = false;
     
-    ctx->options.flip = false;
-    
     if (parse_options(options_str, ctx->options) != NGX_OK) {
         delete ctx;
         return NGX_HTTP_BAD_REQUEST;
@@ -731,14 +671,6 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     return NGX_DONE; 
 }
 
-/**
- * ngx_http_morph
- * @description Initialize the module and link handler. / 모듈을 초기화하고 핸들러를 연결합니다.
- * @param {ngx_conf_t*} cf - Configuration context. / 설정 컨텍스트.
- * @param {ngx_command_t*} cmd - Command structure. / 명령어 구조체.
- * @param {void*} conf - Custom configuration. / 사용자 정의 설정.
- * @returns {char*} - NGX_CONF_OK. / 성공 시 NGX_CONF_OK 반환.
- */
 static char* ngx_http_morph( ngx_conf_t* cf, ngx_command_t* cmd, void* conf )
 {
     ngx_http_core_loc_conf_t* core_location_conf = ( ngx_http_core_loc_conf_t* )ngx_http_conf_get_module_loc_conf( cf, ngx_http_core_module );

@@ -32,285 +32,245 @@ std::string morph_image_get_cache_path(MorphOptions* options) {
     return path;
 }
 
+// Helper: Check Cache
+static bool morph_check_cache(MorphOptions *options, std::string *out_data, time_t *last_modified) {
+    std::string cache_path = morph_image_get_cache_path(options);
+    if (access(cache_path.c_str(), F_OK) != 0) return false;
+
+    struct stat st;
+    if (stat(cache_path.c_str(), &st) != 0) return false;
+
+    // Check TTL
+    if (g_morph_services.find(options->service_name) != g_morph_services.end()) {
+        int ttl = g_morph_services[options->service_name].ttl;
+        if (ttl != -1 && (time(NULL) - st.st_mtime) > ttl) {
+            unlink(cache_path.c_str());
+            return false;
+        }
+    }
+
+    // Hit
+    std::ifstream file(cache_path, std::ios::binary);
+    if (file) {
+        out_data->assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (last_modified) *last_modified = st.st_mtime;
+        return true;
+    }
+    return false;
+}
+
+
+// 200MP limit (approx 800MB raw buffer). 
+// If GIF frames * width * height exceeds this, we fallback to static image (first frame).
+#define MORPH_MAX_GIF_PIXELS 200000000 
+
+// Helper: Load & Resize
+static vips::VImage morph_transform_load(const std::string& image_data, int image_type, MorphOptions *options) {
+    bool use_thumbnail = false;
+    if ((options->width > 0 || options->height > 0) && !options->has_crop) {
+         use_thumbnail = true;
+    }
+
+    // Smart Fallback Check for Animated GIFs
+    bool force_static = false;
+    if (image_type == MORPH_IMG_GIF) {
+        try {
+            // Peek header only (fast)
+            vips::VOption *peek_opts = vips::VImage::option()->set("n", -1)->set("access", VIPS_ACCESS_SEQUENTIAL);
+            vips::VImage peek = vips::VImage::new_from_buffer(image_data.data(), image_data.size(), "", peek_opts);
+            
+            size_t total_pixels = (size_t)peek.width() * peek.height(); // height includes all frames
+            if (total_pixels > MORPH_MAX_GIF_PIXELS) {
+                force_static = true;
+                if (options->debug) {
+                    MorphLogger::instance().debug("GIF too heavy (%lu pixels). Falling back to static image.", total_pixels);
+                }
+            }
+        } catch (...) {
+            // If peek fails, proceed with default caution
+        }
+    }
+
+    if (use_thumbnail) {
+        vips::VOption *thumb_opts = vips::VImage::option()->set("no_rotate", false);
+        if (options->height > 0) thumb_opts->set("height", options->height);
+        
+        // Pass "n=-1" to loader via option_string if not forced static
+        // Note: vips_thumbnail doesn't support passing loader options directly in C++ binding easily for buffer 
+        // without option_string hack or specialized load. 
+        // Ideally we use string based options if supported, but for now we rely on default behavior 
+        // or if Vips/thumbnail supports detecting 'n' pages automatically.
+        // *Correction*: vips_thumbnail_buffer automatically loads page 0 unless "option_string" is used.
+        // Current C++ binding for thumbnail_buffer might not expose option_string easily.
+        // For this refactoring, we will stick to safe defaults. 
+        // If we want animation in thumbnail, we might need a different approach, 
+        // but for DoS protection, forcing static is the key logic here.
+        
+        // For strict animation support in thumbnail, we would need:
+        // thumb_opts->set("option_string", "n=-1");
+        // But verify if `thumbnail_buffer` supports this in used vips version.
+        // Assuming standard vips behavior:
+        
+        if (image_type == MORPH_IMG_GIF && !force_static) {
+             // Try to enable animation for thumbnail if possible/supported
+             // In many vips versions, thumbnail_buffer is for static thumbs. 
+             // If we want animation resize, we often use new_from_buffer -> resize.
+             // But let's keep existing logic safe.
+             // If previous implementation relied on new_from_buffer for animation, we switch to that if not efficient.
+        }
+
+        int load_width = options->width > 0 ? options->width : 10000;
+        vips::VImage img = vips::VImage::thumbnail_buffer((void*)image_data.data(), image_data.size(), load_width, thumb_opts);
+        
+        // If thumbnail_buffer returned single frame (common), so be it. 
+        // The DoS protection is mostly for the 'else' block below where we explicitly requested n=-1.
+        
+        options->width = 0; // Handled
+        options->height = 0;
+        return img;
+    } else {
+        vips::VOption *load_opts = vips::VImage::option();
+        // Only load all frames if it's a GIF and NOT forced to static (Smart Fallback)
+        if (image_type == MORPH_IMG_GIF && !force_static) {
+            load_opts->set("n", -1);
+        }
+        
+        return vips::VImage::new_from_buffer(image_data.data(), image_data.size(), "", load_opts);
+    }
+}
+
+// Helper: Apply Geometry (Resize, Crop, etc)
+static vips::VImage morph_transform_geometry(vips::VImage image, MorphOptions *options) {
+    if (options->width > 0 || options->height > 0) {
+        if (options->has_crop) {
+            image = morph_resizer_resize(image, options->width, options->height);
+        } else {
+            image = morph_resizer_resize_smart(image, options->width, options->height, options->gravity);
+        }
+    }
+
+    if (options->has_crop) {
+        image = morph_resizer_crop(image, options->cx, options->cy, options->cw, options->ch);
+    }
+
+    if (options->rotate_angle != 0.0) {
+        image = morph_resizer_rotate(image, options->rotate_angle);
+    }
+
+    if (options->flip) {
+        image = morph_resizer_flip(image, options->flip_dir);
+    }
+    return image;
+}
+
+// Helper: Apply Filters
+static vips::VImage morph_transform_filters(vips::VImage image, MorphOptions *options) {
+    if (!options->bg_color.empty()) image = morph_filters_set_background(image, options->bg_color.c_str());
+    if (options->grayscale) image = morph_filters_to_grayscale(image);
+    if (options->brightness != 1.0) image = morph_filters_apply_brightness(image, options->brightness);
+    if (options->contrast != 1.0) image = morph_filters_apply_contrast(image, options->contrast);
+    if (options->blur_sigma > 0.0) image = morph_filters_apply_blur(image, options->blur_sigma);
+    if (options->sharpen_sigma > 0.0) image = morph_filters_apply_sharpen(image, options->sharpen_sigma);
+    if (options->noise_sigma > 0.0) image = morph_filters_apply_noise(image, 0, options->noise_sigma);
+    if (!options->watermark_path.empty()) image = morph_filters_apply_watermark(image, options);
+    return image;
+}
+
+// Helper: Save Cache
+static void morph_save_cache(MorphOptions *options, const char* data, size_t len) {
+    std::string cache_path = morph_image_get_cache_path(options);
+    if (ensure_directory(cache_path) == 0) {
+        std::ofstream outfile(cache_path, std::ios::binary);
+        if (outfile) {
+            outfile.write(data, len);
+            outfile.close();
+        }
+    }
+}
+
 ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_log_t *log, bool *is_cache_hit, time_t *last_modified)
 {
     if (is_cache_hit) *is_cache_hit = false;
     if (last_modified) *last_modified = 0;
-    // 0. Cache Check
-    std::string cache_path = morph_image_get_cache_path(options);
-    bool cache_hit = false;
-    
-    if (access(cache_path.c_str(), F_OK) == 0) {
-        // Prepare to check TTL
-        struct stat st;
-        if (stat(cache_path.c_str(), &st) == 0) {
-            // Find service config
-            int ttl = -1;
-            if (g_morph_services.find(options->service_name) != g_morph_services.end()) {
-                ttl = g_morph_services[options->service_name].ttl;
-            }
-            
-            time_t now = time(NULL);
-            if (ttl != -1 && (now - st.st_mtime) > ttl) {
-                // 만료됨 (Expired)
-                if (options->debug) {
-                    MorphLogger::instance().debug("Cache EXPIRED (Age: %ds, TTL: %ds): %s", (int)(now - st.st_mtime), ttl, cache_path.c_str());
-                }
-                unlink(cache_path.c_str());
-                // 캐시 미스로 처리 (Fallthrough to miss)
-            } else {
-                // 유효한 히트 (Valid Hit)
-                cache_hit = true;
-                if (last_modified) *last_modified = st.st_mtime;
-            }
-        }
-    }
-    
-    if (cache_hit) {
-        // 캐시 히트 (Cache Hit)
-        if (options->debug) {
-            MorphLogger::instance().debug("Cache HIT: %s", cache_path.c_str());
-        }
-        
-        std::ifstream file(cache_path, std::ios::binary);
-        if (file) {
-            out_data->assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            if (is_cache_hit) *is_cache_hit = true;
-            return NGX_OK;
-        }
-    } else {
-        if (options->debug) {
-            MorphLogger::instance().debug("Cache MISS: %s", cache_path.c_str());
-        }
+
+    // 1. Check Cache
+    if (morph_check_cache(options, out_data, last_modified)) {
+        if (is_cache_hit) *is_cache_hit = true;
+        return NGX_OK;
     }
 
-    // 1. 이미지 가져오기 (Fetch Image)
+    // 2. Fetch Source
     std::string image_data;
     if (morph_reader_read_source(options, &image_data, log) != NGX_OK) {
         return NGX_HTTP_NOT_FOUND;
     }
 
-    // 2. Hex 검증 및 포맷 식별 (Validate Hex)
+    // 3. Validate
     int image_type = MORPH_IMG_UNKNOWN;
     if (morph_image_validate_hex((void*)image_data.data(), image_data.size(), &image_type) != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Invalid image format");
         return NGX_HTTP_UNSUPPORTED_MEDIA_TYPE;
     }
 
-    // 식별된 타입 로그 (Log the identified type)
-    if (options->debug) {
-        MorphLogger::instance().debug("Image Type Identified: %d (1:JPEG, 2:PNG, 3:WEBP, 4:GIF)", image_type);
-    }
-
-    // 3. VImage 생성 (로드 및 최적화)
-    vips::VImage image;
-    
-    if (options->debug) {
-        MorphLogger::instance().debug("Loading Image...");
-    }
-    
     try {
-        bool use_thumbnail = false;
+        // 4. Transform Pipeline
+        vips::VImage image = morph_transform_load(image_data, image_type, options);
+        image = morph_transform_geometry(image, options);
+        image = morph_transform_filters(image, options);
 
-        if ((options->width > 0 || options->height > 0) && !options->has_crop) {
-             use_thumbnail = true;
-        }
-
-        if (use_thumbnail) {
-            vips::VOption *thumb_opts = vips::VImage::option()->set("no_rotate", false);
-            if (options->height > 0) {
-                thumb_opts->set("height", options->height);
-            }         
-
-            int load_width = options->width > 0 ? options->width : 10000;             
-            image = vips::VImage::thumbnail_buffer(
-                (void*)image_data.data(), 
-                image_data.size(), 
-                load_width, 
-                thumb_opts
-            );
-            
-            // Mark resize as done
-            options->width = 0;
-            options->height = 0; 
-        } else {
-            // Fallback: Simple Load
-            image = vips::VImage::new_from_buffer(image_data.data(), image_data.size(), "");
-        }
-        
-        // 4. Resize & Crop (Resizer)        
-        // Apply Resize / Smart Crop
-        if (options->width > 0 || options->height > 0) {
-            if (options->has_crop) {
-                // Manual Crop Case: Resize then Manual Crop?
-                // Standard behavior: Resize to target, then manual crop relative to that?
-                // Or: Manual crop first, then resize?
-                // Current legacy logic: "Resize" usually means scale.
-                // Let's keep original simple resize if manual crop is present.
-                 if (options->debug) {
-                    MorphLogger::instance().debug("Applying Simple Resize (Manual Crop waiting): %dx%d", options->width, options->height);
-                }
-                image = morph_resizer_resize(image, options->width, options->height);
-            } else {
-                // Smart Crop (Gravity)
-                if (options->debug) {
-                    MorphLogger::instance().debug("Applying Smart Resize (Gravity %d): %dx%d", options->gravity, options->width, options->height);
-                }
-                image = morph_resizer_resize_smart(image, options->width, options->height, options->gravity);
-            }
-        }
-
-        // Apply Crop
-        if (options->has_crop) {
-            image = morph_resizer_crop(image, options->cx, options->cy, options->cw, options->ch);
-        }
-
-        // Apply Rotate
-        if (options->rotate_angle != 0.0) {
-            image = morph_resizer_rotate(image, options->rotate_angle);
-        }
-
-        // Apply Flip
-        if (options->flip) {
-            image = morph_resizer_flip(image, options->flip_dir);
-        }
-
-        // 5. Transform (Filters)
-        
-        // Background Color (Flatten)
-        if (!options->bg_color.empty()) {
-            image = morph_filters_set_background(image, options->bg_color.c_str());
-        }
-
-        // Grayscale
-        if (options->grayscale) {
-            image = morph_filters_to_grayscale(image);
-        }
-
-        // Brightness
-        if (options->brightness != 1.0) {
-            image = morph_filters_apply_brightness(image, options->brightness);
-        }
-
-        // Contrast
-        if (options->contrast != 1.0) {
-            image = morph_filters_apply_contrast(image, options->contrast);
-        }
-
-        // Blur
-        if (options->blur_sigma > 0.0) {
-            image = morph_filters_apply_blur(image, options->blur_sigma);
-        }
-
-        // Noise
-        if (options->noise_sigma > 0.0) {
-             // 0 for default gaussion
-            image = morph_filters_apply_noise(image, 0, options->noise_sigma);
-        }
-        
-        // 6. Output
-        std::string format_ext = ".jpg";
+        // 5. Output
         vips::VOption *save_opts = vips::VImage::option();
-
-        if (options->format == "png") {
-            format_ext = ".png";
-        } else if (options->format == "webp") {
-            format_ext = ".webp";
-            save_opts->set("Q", options->quality);
-        } else if (options->format == "gif") {
-            format_ext = ".gif"; 
-        } else {
-            format_ext = ".jpg";
-            save_opts->set("Q", options->quality);
-        }
+        std::string ext = ".jpg";
+        
+        if (options->format == "png") ext = ".png";
+        else if (options->format == "webp") { ext = ".webp"; save_opts->set("Q", options->quality); }
+        else if (options->format == "gif") ext = ".gif"; 
+        else save_opts->set("Q", options->quality);
 
         char *buf = NULL;
         size_t len = 0;
-        
-        if (options->debug) {
-            MorphLogger::instance().debug("Output Location: Memory Buffer. Format: %s", format_ext.c_str());
-        }
-
-        image.write_to_buffer(format_ext.c_str(), (void**)&buf, &len, save_opts);
+        image.write_to_buffer(ext.c_str(), (void**)&buf, &len, save_opts);
         
         if (buf && len > 0) {
             out_data->assign(buf, len);
-            
-            // 캐시에 저장 (Save to Cache)
-            if (ensure_directory(cache_path) == 0) {
-                std::ofstream outfile(cache_path, std::ios::binary);
-                if (outfile) {
-                    outfile.write(buf, len);
-                    outfile.close();
-                    if (options->debug) {
-                        MorphLogger::instance().debug("Cache Saved: %s", cache_path.c_str());
-                    }
-                    if (last_modified) *last_modified = time(NULL);
-                } else {
-                     if (options->debug) {
-                         MorphLogger::instance().debug("Cache Write Failed: %s", cache_path.c_str());
-                    }
-                }
-            } else {
-                 if (options->debug) {
-                    MorphLogger::instance().debug("Cache Mkdir Failed: %s", cache_path.c_str());
-                }
-            }
-
-            g_free(buf); // Vips uses GLib allocs for buffer return
-        } else {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            morph_save_cache(options, buf, len);
+            if (last_modified) *last_modified = time(NULL);
+            g_free(buf);
+            return NGX_OK;
         }
-        
+
     } catch (vips::VError &e) {
          ngx_log_error(NGX_LOG_ERR, log, 0, "Vips Processing Error: %s", e.what());
          return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    return NGX_OK;
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
 }
 
-/**
- * morph_image_validate_hex
- * @description Validate file magic numbers and identify format. / 파일 매직 넘버를 검사하여 유효성을 확인하고 포맷을 식별합니다.
- * @param {void*} data - Pointer to file data. / 파일 데이터 포인터.
- * @param {size_t} len - Data length. / 데이터 길이.
- * @param {int*} out_type - Identified image type (MorphImageType). / 식별된 이미지 타입.
- * @returns {ngx_int_t} - NGX_OK (valid) or NGX_ERROR (invalid). / 유효하면 NGX_OK, 아니면 NGX_ERROR.
- */
 ngx_int_t morph_image_validate_hex(void *data, size_t len, int *out_type)
 {
     if (out_type) *out_type = MORPH_IMG_UNKNOWN;
-
-    if (len < 12) { // Minimum length check
-        return NGX_ERROR;
-    }
+    if (len < 12) return NGX_ERROR;
 
     unsigned char *bytes = (unsigned char *)data;
 
-    // JPEG: FF D8
+    // JPEG
     if (bytes[0] == 0xFF && bytes[1] == 0xD8) {
         if (out_type) *out_type = MORPH_IMG_JPEG;
         return NGX_OK;
     }
-
-    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    // PNG
     if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
         bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A) {
         if (out_type) *out_type = MORPH_IMG_PNG;
         return NGX_OK;
     }
-
-    // GIF: GIF87a or GIF89a (47 49 46 38 39 61)
+    // GIF
     if (bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' &&
         bytes[3] == '8' && (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a') {
         if (out_type) *out_type = MORPH_IMG_GIF;
         return NGX_OK;
     }
-
-    // WEBP: RIFF .... WEBP
-    // 0-3: RIFF
-    // 8-11: WEBP
+    // WEBP
     if (bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F' &&
         bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
         if (out_type) *out_type = MORPH_IMG_WEBP;
