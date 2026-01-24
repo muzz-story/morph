@@ -66,13 +66,17 @@ static bool morph_check_cache(MorphOptions *options, std::string *out_data, time
 
 // Helper: Load & Resize
 static vips::VImage morph_transform_load(const std::string& image_data, int image_type, MorphOptions *options) {
+    // Unified Optimized Load Logic using thumbnail_buffer
+    // This handles both static images and animated GIFs efficiently.
+    // It also handles "Smart Resize" (Cover+Crop) via VIPS_INTERESTING_CENTRE.
+    
+    // Determine if we can use thumbnail (mostly yes if resizing)
+    // We force use_thumbnail for GIFs now to use n=-1 optimization
+    bool is_gif = (image_type == MORPH_IMG_GIF);
     bool use_thumbnail = false;
-    if ((options->width > 0 || options->height > 0) && !options->has_crop) {
-         use_thumbnail = true;
-    }
-
-    // Smart Fallback Check for Animated GIFs
     bool force_static = false;
+
+    // Smart Fallback Check for Animated GIFs (DoS Protection)
     if (image_type == MORPH_IMG_GIF) {
         try {
             // Peek header only (fast)
@@ -90,51 +94,55 @@ static vips::VImage morph_transform_load(const std::string& image_data, int imag
             // If peek fails, proceed with default caution
         }
     }
-
+    
+    // Condition for thumbnail:
+    // 1. Resizing requested (W or H > 0) AND (Smart Resize OR Standard Resize)
+    // 2. We basically always use it for resize if possible.
+    if ((options->width > 0 || options->height > 0)) {
+         use_thumbnail = true;
+    }
+    
     if (use_thumbnail) {
         vips::VOption *thumb_opts = vips::VImage::option()->set("no_rotate", false);
         if (options->height > 0) thumb_opts->set("height", options->height);
         
-        // Pass "n=-1" to loader via option_string if not forced static
-        // Note: vips_thumbnail doesn't support passing loader options directly in C++ binding easily for buffer 
-        // without option_string hack or specialized load. 
-        // Ideally we use string based options if supported, but for now we rely on default behavior 
-        // or if Vips/thumbnail supports detecting 'n' pages automatically.
-        // *Correction*: vips_thumbnail_buffer automatically loads page 0 unless "option_string" is used.
-        // Current C++ binding for thumbnail_buffer might not expose option_string easily.
-        // For this refactoring, we will stick to safe defaults. 
-        // If we want animation in thumbnail, we might need a different approach, 
-        // but for DoS protection, forcing static is the key logic here.
+        // GIF Animation Support: Load all frames
+        if (is_gif && !force_static) {
+            thumb_opts->set("option_string", "n=-1");
+        }
         
-        // For strict animation support in thumbnail, we would need:
-        // thumb_opts->set("option_string", "n=-1");
-        // But verify if `thumbnail_buffer` supports this in used vips version.
-        // Assuming standard vips behavior:
-        
-        if (image_type == MORPH_IMG_GIF && !force_static) {
-             // Try to enable animation for thumbnail if possible/supported
-             // In many vips versions, thumbnail_buffer is for static thumbs. 
-             // If we want animation resize, we often use new_from_buffer -> resize.
-             // But let's keep existing logic safe.
-             // If previous implementation relied on new_from_buffer for animation, we switch to that if not efficient.
+        // Smart Resize Optimization (Resize to Cover + Crop)
+        // If user wants Smart Resize (width & height set, no manual crop), 
+        // we use VIPS_INTERESTING_CENTRE to automatically cover and crop.
+        // NOTE: For GIFs (n=-1), Vips might fail or crop the strip incorrectly if we use built-in crop.
+        // We disable built-in crop for GIFs and let our robust frame-by-frame resize_smart handle it.
+        if (!is_gif && !options->has_crop && options->width > 0 && options->height > 0) {
+            thumb_opts->set("crop", VIPS_INTERESTING_CENTRE);
         }
 
         int load_width = options->width > 0 ? options->width : 10000;
+        
+        // NOTE: If only Height is provided, load_width needs to be huge or handled.
+        // vips_thumbnail needs width. If width not set, maybe rely on height constraint?
+        // Actually vips_thumbnail requires width. 
+        // If we only have height, we set width to very large (10000) so height controls it, 
+        // OR we don't use thumbnail for height-only? 
+        // Let's stick to current logic: width or 10000.
+        
         vips::VImage img = vips::VImage::thumbnail_buffer((void*)image_data.data(), image_data.size(), load_width, thumb_opts);
         
-        // If thumbnail_buffer returned single frame (common), so be it. 
-        // The DoS protection is mostly for the 'else' block below where we explicitly requested n=-1.
+        // Update Actual Loaded Options to reflect what thumbnail did
+        // If we asked for Centre Crop, result is already WxH.
+        // We shouldn't set options->width/height to 0 yet because filters might need them?
+        // But resize step should be skipped if dimensions match.
         
-        options->width = 0; // Handled
-        options->height = 0;
         return img;
     } else {
+        // Fallback for no-resize load (Original Image)
         vips::VOption *load_opts = vips::VImage::option();
-        // Only load all frames if it's a GIF and NOT forced to static (Smart Fallback)
-        if (image_type == MORPH_IMG_GIF && !force_static) {
+        if (is_gif && !force_static) {
             load_opts->set("n", -1);
         }
-        
         return vips::VImage::new_from_buffer(image_data.data(), image_data.size(), "", load_opts);
     }
 }
@@ -221,10 +229,30 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         vips::VOption *save_opts = vips::VImage::option();
         std::string ext = ".jpg";
         
-        if (options->format == "png") ext = ".png";
-        else if (options->format == "webp") { ext = ".webp"; save_opts->set("Q", options->quality); }
-        else if (options->format == "gif") ext = ".gif"; 
-        else save_opts->set("Q", options->quality);
+        // Determine output format
+        std::string target_fmt = options->format;
+        if (target_fmt.empty()) {
+             switch (image_type) {
+                case MORPH_IMG_PNG: target_fmt = "png"; break;
+                case MORPH_IMG_WEBP: target_fmt = "webp"; break;
+                case MORPH_IMG_GIF: target_fmt = "gif"; break;
+                default: target_fmt = "jpg"; break;
+            }
+            // Update options with detected format for correct caching
+            options->format = target_fmt;
+        }
+
+        if (target_fmt == "png") {
+            ext = ".png";
+        } else if (target_fmt == "webp") {
+            ext = ".webp";
+            save_opts->set("Q", options->quality);
+        } else if (target_fmt == "gif") {
+            ext = ".gif";
+        } else {
+            ext = ".jpg";
+            save_opts->set("Q", options->quality);
+        }
 
         char *buf = NULL;
         size_t len = 0;

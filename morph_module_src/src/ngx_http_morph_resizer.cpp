@@ -19,29 +19,40 @@ vips::VImage morph_resizer_resize(vips::VImage image, int width, int height)
 
     int input_w = image.width();
     int input_h = image.height();
+    int page_height = 0;
+    if (image.get_typeof("page-height") != 0) {
+        page_height = image.get_int("page-height");
+    }
+    int calc_h = (page_height > 0) ? page_height : input_h;
 
+    vips::VImage result;
+
+    // Fixed Resize (Stretch/Squash if both W/H provided)
     if (width > 0 && height > 0) {
         scale = (double)width / input_w;
-        vscale = (double)height / input_h;
-        
-        return image.resize(scale, vips::VImage::option()->set("vscale", vscale));
+        vscale = (double)height / calc_h;
+        result = image.resize(scale, vips::VImage::option()->set("vscale", vscale));
     } else if (width > 0) {
         scale = (double)width / input_w;
-        return image.resize(scale);
+        result = image.resize(scale);
     } else {
-        scale = (double)height / input_h;
-        return image.resize(scale);
+        scale = (double)height / calc_h;
+        result = image.resize(scale);
     }
+
+    if (page_height > 0) {
+        int new_page_height = (int)round(page_height * vscale); 
+        // Or better: result.height / n_pages
+        int n_pages = input_h / page_height;
+        new_page_height = result.height() / n_pages;
+        result.set("page-height", new_page_height);
+    }
+    return result;
 }
 
 /**
  * morph_resizer_resize_smart
  * @description Smart Resize: Scale to cover, then crop based on gravity. / 스마트 리사이즈: 꽉 채우게 확대한 후 정렬 기준에 맞춰 자릅니다.
- * @param {vips::VImage} image - Input image.
- * @param {int} width - Target width.
- * @param {int} height - Target height.
- * @param {int} gravity - Gravity (0:Center, 1:Top, 2:Bottom, 3:Left, 4:Right).
- * @returns {vips::VImage} - Processed image.
  */
 vips::VImage morph_resizer_resize_smart(vips::VImage image, int width, int height, int gravity)
 {
@@ -49,6 +60,86 @@ vips::VImage morph_resizer_resize_smart(vips::VImage image, int width, int heigh
 
     int input_w = image.width();
     int input_h = image.height();
+    int page_height = 0;
+    if (image.get_typeof("page-height") != 0) {
+        page_height = image.get_int("page-height");
+    }
+    int calc_h = (page_height > 0) ? page_height : input_h;
+
+    // Optimization: If already correct size (handled by thumbnail_buffer), return early
+    if (input_w == width && calc_h == height) {
+        return image;
+    }
+
+    // --- Animation Handling: Frame-by-Frame Processing ---
+    if (page_height > 0) {
+        int n_pages = input_h / page_height;
+        std::vector<vips::VImage> frames;
+        
+        // 1. Calculate Scale to COVER (same for all frames)
+        double scale_x = (double)width / input_w;
+        double scale_y = (double)height / calc_h;
+        double scale = (scale_x > scale_y) ? scale_x : scale_y;
+        
+        // 2. Pre-calculate Crop Coordinates (same for all frames)
+        // We utilize the loop to process each frame individually.
+        
+        // Wait, vips resize might use round or floor. Safer to resize first frame.
+        // Let's just loop and process.
+        
+        for (int i = 0; i < n_pages; ++i) {
+            // Extract Frame
+            vips::VImage frame = image.extract_area(0, i * page_height, input_w, page_height);
+            
+            // Resize Frame
+            vips::VImage r_frame = frame.resize(scale);
+            
+            // Calculate Crop (on first frame only optimization possible, but fast enough)
+            int r_w = r_frame.width();
+            int r_h = r_frame.height();
+            int cx = 0, cy = 0;
+            
+            // Default Center
+            cx = (r_w - width) / 2;
+            cy = (r_h - height) / 2;
+
+            switch (gravity) {
+                case MORPH_GRAVITY_TOP: cy = 0; break;
+                case MORPH_GRAVITY_BOTTOM: cy = r_h - height; break;
+                case MORPH_GRAVITY_LEFT: cx = 0; break;
+                case MORPH_GRAVITY_RIGHT: cx = r_w - width; break;
+                case MORPH_GRAVITY_CENTER: default: break;
+            }
+            if (cx < 0) cx = 0;
+            if (cy < 0) cy = 0;
+            
+            // Ensure crop doesn't exceed bounds
+            int cw = (cx + width <= r_w) ? width : (r_w - cx);
+            int ch = (cy + height <= r_h) ? height : (r_h - cy);
+            
+            // Crop Frame
+            frames.push_back(r_frame.extract_area(cx, cy, cw, ch));
+        }
+        
+        // 3. Rejoin Frames
+        vips::VImage result = vips::VImage::arrayjoin(frames, vips::VImage::option()->set("across", 1));
+        
+        // 4. Update Metadata
+        int final_page_height = frames[0].height(); // Assuming all are same
+        result.set("page-height", final_page_height);
+
+        // Copy optional animation metadata (delay, loop) if present
+        if (image.get_typeof("delay") != 0) {
+            result.set("delay", image.get_array_int("delay"));
+        }
+        if (image.get_typeof("loop") != 0) {
+            result.set("loop", image.get_int("loop"));
+        }
+        
+        return result;
+    }
+
+    // --- Static Image Handling (Original Logic) ---
 
     // 1. Calculate Scale to COVER (max of w_scale, h_scale)
     double scale_x = (double)width / input_w;

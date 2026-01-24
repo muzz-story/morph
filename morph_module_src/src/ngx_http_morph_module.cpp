@@ -314,7 +314,7 @@ static ngx_int_t parse_watermark(const std::string& part, MorphOptions& opts) {
             std::string k = item.substr(0, colon);
             std::string v = item.substr(colon+1);
             
-            if (k == "path") opts.watermark_path = sanitize_path(v);
+            if (k == "path") opts.watermark_path = MorphUtils::sanitize_path(v);
             else if (k == "o" || k == "opacity") opts.watermark_opacity = std::stod(v);
             else if (k == "x") opts.watermark_x_offset = std::stoi(v);
             else if (k == "y") opts.watermark_y_offset = std::stoi(v);

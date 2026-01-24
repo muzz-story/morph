@@ -79,7 +79,9 @@ vips::VImage morph_filters_apply_contrast(vips::VImage image, double contrast) {
  * @returns {vips::VImage} - Noised image. / 노이즈가 적용된 이미지.
  */
 vips::VImage morph_filters_apply_noise(vips::VImage image, int type, double sigma) {
-     return image.gaussnoise(sigma);
+     vips::VImage noise = vips::VImage::gaussnoise(image.width(), image.height(),
+        vips::VImage::option()->set("sigma", sigma)->set("mean", 0.0));
+     return image + noise;
 }
 
 /**
