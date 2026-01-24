@@ -65,6 +65,39 @@ static bool morph_check_cache(MorphOptions *options, std::string *out_data, time
 #define MORPH_MAX_GIF_PIXELS 200000000 
 
 // Helper: Load & Resize
+// Helper: Configure Thumbnail Options
+static void morph_configure_thumbnail(vips::VOption *thumb_opts, MorphOptions *options, int image_type, bool force_static) {
+    thumb_opts->set("no_rotate", false);
+    if (options->height > 0) thumb_opts->set("height", options->height);
+    
+    // GIF Animation Support: Load all frames
+    bool is_gif = (image_type == MORPH_IMG_GIF);
+    if (is_gif && !force_static) {
+        thumb_opts->set("option_string", "n=-1");
+    }
+    
+    // Smart Resize Optimization (Resize to Cover + Crop)
+    // NOTE: Disable for GIFs to avoid crashes/incorrect crop
+    if (!is_gif && !options->has_crop && options->width > 0 && options->height > 0) {
+        thumb_opts->set("crop", VIPS_INTERESTING_CENTRE);
+    }
+}
+
+// Helper: Detect Output Format
+static void morph_detect_output_format(MorphOptions *options, int image_type) {
+    if (!options->format.empty()) return;
+
+    std::string target_fmt;
+     switch (image_type) {
+        case MORPH_IMG_PNG: target_fmt = "png"; break;
+        case MORPH_IMG_WEBP: target_fmt = "webp"; break;
+        case MORPH_IMG_GIF: target_fmt = "gif"; break;
+        default: target_fmt = "jpg"; break;
+    }
+    options->format = target_fmt;
+}
+
+// Helper: Load & Resize
 static vips::VImage morph_transform_load(const std::string& image_data, int image_type, MorphOptions *options) {
     // Unified Optimized Load Logic using thumbnail_buffer
     // This handles both static images and animated GIFs efficiently.
@@ -103,39 +136,11 @@ static vips::VImage morph_transform_load(const std::string& image_data, int imag
     }
     
     if (use_thumbnail) {
-        vips::VOption *thumb_opts = vips::VImage::option()->set("no_rotate", false);
-        if (options->height > 0) thumb_opts->set("height", options->height);
-        
-        // GIF Animation Support: Load all frames
-        if (is_gif && !force_static) {
-            thumb_opts->set("option_string", "n=-1");
-        }
-        
-        // Smart Resize Optimization (Resize to Cover + Crop)
-        // If user wants Smart Resize (width & height set, no manual crop), 
-        // we use VIPS_INTERESTING_CENTRE to automatically cover and crop.
-        // NOTE: For GIFs (n=-1), Vips might fail or crop the strip incorrectly if we use built-in crop.
-        // We disable built-in crop for GIFs and let our robust frame-by-frame resize_smart handle it.
-        if (!is_gif && !options->has_crop && options->width > 0 && options->height > 0) {
-            thumb_opts->set("crop", VIPS_INTERESTING_CENTRE);
-        }
+        vips::VOption *thumb_opts = vips::VImage::option();
+        morph_configure_thumbnail(thumb_opts, options, image_type, force_static);
 
         int load_width = options->width > 0 ? options->width : 10000;
-        
-        // NOTE: If only Height is provided, load_width needs to be huge or handled.
-        // vips_thumbnail needs width. If width not set, maybe rely on height constraint?
-        // Actually vips_thumbnail requires width. 
-        // If we only have height, we set width to very large (10000) so height controls it, 
-        // OR we don't use thumbnail for height-only? 
-        // Let's stick to current logic: width or 10000.
-        
         vips::VImage img = vips::VImage::thumbnail_buffer((void*)image_data.data(), image_data.size(), load_width, thumb_opts);
-        
-        // Update Actual Loaded Options to reflect what thumbnail did
-        // If we asked for Centre Crop, result is already WxH.
-        // We shouldn't set options->width/height to 0 yet because filters might need them?
-        // But resize step should be skipped if dimensions match.
-        
         return img;
     } else {
         // Fallback for no-resize load (Original Image)
@@ -230,17 +235,9 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         std::string ext = ".jpg";
         
         // Determine output format
+        // Determine output format
+        morph_detect_output_format(options, image_type);
         std::string target_fmt = options->format;
-        if (target_fmt.empty()) {
-             switch (image_type) {
-                case MORPH_IMG_PNG: target_fmt = "png"; break;
-                case MORPH_IMG_WEBP: target_fmt = "webp"; break;
-                case MORPH_IMG_GIF: target_fmt = "gif"; break;
-                default: target_fmt = "jpg"; break;
-            }
-            // Update options with detected format for correct caching
-            options->format = target_fmt;
-        }
 
         if (target_fmt == "png") {
             ext = ".png";

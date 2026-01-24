@@ -5,6 +5,78 @@
 /**
  * morph_resizer_resize
  * @description Resize the image to specified dimensions. / 이미지를 지정된 크기로 리사이즈합니다.
+ */
+vips::VImage morph_resizer_resize(vips::VImage image, int width, int height);
+
+/**
+ * morph_resizer_process_animated_frames
+ * @description Helper: Process animated frames one by one for smart resize.
+ */
+static vips::VImage morph_resizer_process_animated_frames(vips::VImage image, int width, int height, int input_w, int input_h, int page_height, int gravity, int calc_h) {
+    int n_pages = input_h / page_height;
+    std::vector<vips::VImage> frames;
+    
+    // 1. Calculate Scale to COVER (same for all frames)
+    double scale_x = (double)width / input_w;
+    double scale_y = (double)height / calc_h;
+    double scale = (scale_x > scale_y) ? scale_x : scale_y;
+    
+    // 2. Loop and process
+    for (int i = 0; i < n_pages; ++i) {
+        // Extract Frame
+        vips::VImage frame = image.extract_area(0, i * page_height, input_w, page_height);
+        
+        // Resize Frame
+        vips::VImage r_frame = frame.resize(scale);
+        
+        // Calculate Crop (on first frame only optimization possible, but fast enough)
+        int r_w = r_frame.width();
+        int r_h = r_frame.height();
+        int cx = 0, cy = 0;
+        
+        // Default Center
+        cx = (r_w - width) / 2;
+        cy = (r_h - height) / 2;
+
+        switch (gravity) {
+            case MORPH_GRAVITY_TOP: cy = 0; break;
+            case MORPH_GRAVITY_BOTTOM: cy = r_h - height; break;
+            case MORPH_GRAVITY_LEFT: cx = 0; break;
+            case MORPH_GRAVITY_RIGHT: cx = r_w - width; break;
+            case MORPH_GRAVITY_CENTER: default: break;
+        }
+        if (cx < 0) cx = 0;
+        if (cy < 0) cy = 0;
+        
+        // Ensure crop doesn't exceed bounds
+        int cw = (cx + width <= r_w) ? width : (r_w - cx);
+        int ch = (cy + height <= r_h) ? height : (r_h - cy);
+        
+        // Crop Frame
+        frames.push_back(r_frame.extract_area(cx, cy, cw, ch));
+    }
+    
+    // 3. Rejoin Frames
+    vips::VImage result = vips::VImage::arrayjoin(frames, vips::VImage::option()->set("across", 1));
+    
+    // 4. Update Metadata
+    int final_page_height = frames[0].height(); // Assuming all are same
+    result.set("page-height", final_page_height);
+
+    // Copy optional animation metadata (delay, loop) if present
+    if (image.get_typeof("delay") != 0) {
+        result.set("delay", image.get_array_int("delay"));
+    }
+    if (image.get_typeof("loop") != 0) {
+        result.set("loop", image.get_int("loop"));
+    }
+    
+    return result;
+}
+
+/**
+ * morph_resizer_resize
+ * @description Resize the image to specified dimensions. / 이미지를 지정된 크기로 리사이즈합니다.
  * @param {vips::VImage} image - Input image. / 입력 이미지.
  * @param {int} width - Target width. / 목표 너비.
  * @param {int} height - Target height. / 목표 높이.
@@ -51,6 +123,48 @@ vips::VImage morph_resizer_resize(vips::VImage image, int width, int height)
 }
 
 /**
+ * morph_resizer_process_static_image
+ * @description Helper: Process static image (standard resize + crop)
+ */
+static vips::VImage morph_resizer_process_static_image(vips::VImage image, int width, int height, int input_w, int input_h, int gravity) {
+    // 1. Calculate Scale to COVER (max of w_scale, h_scale)
+    double scale_x = (double)width / input_w;
+    double scale_y = (double)height / input_h;
+    double scale = (scale_x > scale_y) ? scale_x : scale_y;
+
+    // 2. Resize
+    vips::VImage resized = image.resize(scale);
+    
+    // 3. Calculate Crop Coordinates from Resized Image
+    int new_w = resized.width();
+    int new_h = resized.height();
+    
+    int cx = 0, cy = 0;
+
+    // Default Center
+    cx = (new_w - width) / 2;
+    cy = (new_h - height) / 2;
+
+    switch (gravity) {
+        case MORPH_GRAVITY_TOP: cy = 0; break;
+        case MORPH_GRAVITY_BOTTOM: cy = new_h - height; break;
+        case MORPH_GRAVITY_LEFT: cx = 0; break;
+        case MORPH_GRAVITY_RIGHT: cx = new_w - width; break;
+        case MORPH_GRAVITY_CENTER: default: break;
+    }
+    
+    // Safety Bounds
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+
+    // If result is somehow smaller than target (rounding errors?), stick to new_w/h
+    int crop_w = (cx + width <= new_w) ? width : (new_w - cx);
+    int crop_h = (cy + height <= new_h) ? height : (new_h - cy);
+    
+    return resized.extract_area(cx, cy, crop_w, crop_h);
+}
+
+/**
  * morph_resizer_resize_smart
  * @description Smart Resize: Scale to cover, then crop based on gravity. / 스마트 리사이즈: 꽉 채우게 확대한 후 정렬 기준에 맞춰 자릅니다.
  */
@@ -73,120 +187,11 @@ vips::VImage morph_resizer_resize_smart(vips::VImage image, int width, int heigh
 
     // --- Animation Handling: Frame-by-Frame Processing ---
     if (page_height > 0) {
-        int n_pages = input_h / page_height;
-        std::vector<vips::VImage> frames;
-        
-        // 1. Calculate Scale to COVER (same for all frames)
-        double scale_x = (double)width / input_w;
-        double scale_y = (double)height / calc_h;
-        double scale = (scale_x > scale_y) ? scale_x : scale_y;
-        
-        // 2. Pre-calculate Crop Coordinates (same for all frames)
-        // We utilize the loop to process each frame individually.
-        
-        // Wait, vips resize might use round or floor. Safer to resize first frame.
-        // Let's just loop and process.
-        
-        for (int i = 0; i < n_pages; ++i) {
-            // Extract Frame
-            vips::VImage frame = image.extract_area(0, i * page_height, input_w, page_height);
-            
-            // Resize Frame
-            vips::VImage r_frame = frame.resize(scale);
-            
-            // Calculate Crop (on first frame only optimization possible, but fast enough)
-            int r_w = r_frame.width();
-            int r_h = r_frame.height();
-            int cx = 0, cy = 0;
-            
-            // Default Center
-            cx = (r_w - width) / 2;
-            cy = (r_h - height) / 2;
-
-            switch (gravity) {
-                case MORPH_GRAVITY_TOP: cy = 0; break;
-                case MORPH_GRAVITY_BOTTOM: cy = r_h - height; break;
-                case MORPH_GRAVITY_LEFT: cx = 0; break;
-                case MORPH_GRAVITY_RIGHT: cx = r_w - width; break;
-                case MORPH_GRAVITY_CENTER: default: break;
-            }
-            if (cx < 0) cx = 0;
-            if (cy < 0) cy = 0;
-            
-            // Ensure crop doesn't exceed bounds
-            int cw = (cx + width <= r_w) ? width : (r_w - cx);
-            int ch = (cy + height <= r_h) ? height : (r_h - cy);
-            
-            // Crop Frame
-            frames.push_back(r_frame.extract_area(cx, cy, cw, ch));
-        }
-        
-        // 3. Rejoin Frames
-        vips::VImage result = vips::VImage::arrayjoin(frames, vips::VImage::option()->set("across", 1));
-        
-        // 4. Update Metadata
-        int final_page_height = frames[0].height(); // Assuming all are same
-        result.set("page-height", final_page_height);
-
-        // Copy optional animation metadata (delay, loop) if present
-        if (image.get_typeof("delay") != 0) {
-            result.set("delay", image.get_array_int("delay"));
-        }
-        if (image.get_typeof("loop") != 0) {
-            result.set("loop", image.get_int("loop"));
-        }
-        
-        return result;
+        return morph_resizer_process_animated_frames(image, width, height, input_w, input_h, page_height, gravity, calc_h);
     }
 
     // --- Static Image Handling (Original Logic) ---
-
-    // 1. Calculate Scale to COVER (max of w_scale, h_scale)
-    double scale_x = (double)width / input_w;
-    double scale_y = (double)height / input_h;
-    double scale = (scale_x > scale_y) ? scale_x : scale_y;
-
-    // 2. Resize
-    vips::VImage resized = image.resize(scale);
-    
-    // 3. Calculate Crop Coordinates from Resized Image
-    int new_w = resized.width();
-    int new_h = resized.height();
-    
-    int cx = 0, cy = 0;
-
-    // Default Center
-    cx = (new_w - width) / 2;
-    cy = (new_h - height) / 2;
-
-    switch (gravity) {
-        case MORPH_GRAVITY_TOP:
-            cy = 0;
-            break;
-        case MORPH_GRAVITY_BOTTOM:
-            cy = new_h - height;
-            break;
-        case MORPH_GRAVITY_LEFT:
-            cx = 0;
-            break;
-        case MORPH_GRAVITY_RIGHT:
-            cx = new_w - width;
-            break;
-        case MORPH_GRAVITY_CENTER:
-        default:
-            // Already centered
-            break;
-    }
-    
-    // Safety Bounds
-    if (cx < 0) cx = 0;
-    if (cy < 0) cy = 0;
-
-    // If result is somehow smaller than target (rounding errors?), stick to new_w/h
-    int crop_w = (cx + width <= new_w) ? width : (new_w - cx);
-    int crop_h = (cy + height <= new_h) ? height : (new_h - cy);
-    
-    return resized.extract_area(cx, cy, crop_w, crop_h);
+    return morph_resizer_process_static_image(image, width, height, input_w, input_h, gravity);
 }
 
 /**
