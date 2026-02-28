@@ -1,0 +1,73 @@
+name: Build
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ hashFiles('docker/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker
+          load: true
+          tags: morph:ci
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Compile module and start Nginx
+        run: |
+          docker run -d --name morph_ci \
+            -p 8080:8080 \
+            -v ${{ github.workspace }}/morph_module_src:/svc/src/morph_module_src \
+            -v ${{ github.workspace }}/nginx_conf/morph.conf:/svc/morph/nginx/conf/morph.conf \
+            -v ${{ github.workspace }}/nginx_conf/nginx.conf:/svc/morph/nginx/conf/nginx.conf \
+            morph:ci \
+            /bin/bash -c "/usr/src/docker_build.sh && /svc/morph/nginx/sbin/nginx -g 'daemon off;'"
+
+      - name: Wait for Nginx
+        run: |
+          for i in $(seq 1 18); do
+            sleep 10
+            if curl -sf http://localhost:8080/ > /dev/null 2>&1; then
+              echo "Nginx is up after $((i * 10))s"
+              exit 0
+            fi
+            echo "Waiting... ($i/18)"
+          done
+          echo "Nginx did not start in time"
+          docker logs morph_ci
+          exit 1
+
+      - name: Print build logs
+        if: always()
+        run: docker logs morph_ci
+
+      - name: Stop container
+        if: always()
+        run: docker stop morph_ci || true

@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  morph:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: morph_builder
+    volumes:
+      - ../morph_module_src:/svc/src/morph_module_src
+      - ./morph.docker.conf:/svc/morph/nginx/conf/morph.conf
+      - ../nginx_conf/nginx.conf:/svc/morph/nginx/conf/nginx.conf
+    working_dir: /svc/src/nginx-1.26.2
+    command: /bin/bash -c "/usr/src/docker_build.sh && /svc/morph/nginx/sbin/nginx -g 'daemon off;'"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

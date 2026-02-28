@@ -1,0 +1,22 @@
+# Build outputs
+*.so
+*.o
+*.a
+
+# Nginx build artifacts
+objs/
+
+# Bundled source archives (download from official sources, do not commit)
+linux_install/*.tar.gz
+linux_install/*.tar.bz2
+linux_install/*.zip
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.orig
+
+# Claude Code session data
+.claude/
