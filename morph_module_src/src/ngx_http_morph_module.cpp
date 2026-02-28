@@ -1,10 +1,23 @@
+// Copyright 2025-2026 muzz
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "std.h"
 #include "ngx_http_morph_image.h"
 #include "ngx_http_morph_types.h"
 #include "ngx_http_morph_globals.h"
 #include "ngx_http_morph_utils.h"
 
-// 전역 변수 정의 (Global Definitions)
 std::map<std::string, MorphServiceConfig> g_morph_services;
 std::string g_morph_config_file_path;
 
@@ -12,7 +25,6 @@ std::string g_morph_config_file_path;
 extern "C" {
 #endif
 
-// Configuration Structure / 설정 구조체
 typedef struct {
     ngx_flag_t  enable;
     ngx_int_t   quality;
@@ -386,10 +398,7 @@ static ngx_int_t parse_dimension(const std::string& part, MorphOptions& opts) {
     return NGX_OK;
 }
 
-/**
- * parse_options
- * @description Parse the URL option segment to extract image processing parameters. / URL 옵션 세그먼트를 파싱하여 이미지 처리 파라미터를 추출합니다.
- */
+// Parse the URL option segment to extract image processing parameters.
 static ngx_int_t parse_options(const std::string& segment, MorphOptions& opts) {
     size_t start = 0;
     size_t end = segment.find('_');
@@ -625,17 +634,7 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
         std::string req_url((char*)r->uri.data, r->uri.len);
         MorphLogger::instance().debug("Request URL: %s", req_url.c_str());
     }
-    ctx->options.rotate_angle = 0.0;
-    ctx->options.brightness = 1.0;
-    ctx->options.contrast = 1.0;
-    ctx->options.noise_sigma = 0.0;
-    ctx->options.flip = false;
-    
-    if (parse_options(options_str, ctx->options) != NGX_OK) {
-        delete ctx;
-        return NGX_HTTP_BAD_REQUEST;
-    }
-    
+
     if (ctx->options.debug) {
         MorphLogger::instance().debug("User Options: Width=%d, Height=%d, Crop=%d, Grayscale=%d, Blur=%.1f, Rotate=%.1f, Flip=%d, Src=%s", 
             ctx->options.width, ctx->options.height, ctx->options.has_crop, ctx->options.grayscale, 

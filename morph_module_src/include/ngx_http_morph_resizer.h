@@ -1,57 +1,35 @@
+// Copyright 2025-2026 muzz
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #ifndef NGX_HTTP_MORPH_RESIZER_H
 #define NGX_HTTP_MORPH_RESIZER_H
 
 #include "ngx_http_morph_types.h"
 
-/**
- * morph_resizer_resize
- * @description Resize the image to specified dimensions. / 이미지를 지정된 크기로 리사이즈합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} width - Target width. / 목표 너비.
- * @param {int} height - Target height. / 목표 높이.
- * @returns {vips::VImage} - Resized image. / 리사이즈된 이미지.
- */
+// Resize the image to the specified dimensions.
 vips::VImage morph_resizer_resize(vips::VImage image, int width, int height);
 
-/**
- * morph_resizer_resize_smart
- * @description Smart resize and crop the image to specified dimensions with gravity. / 이미지를 지정된 크기로 스마트 리사이즈 및 중력 기반 자르기를 수행합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} width - Target width. / 목표 너비.
- * @param {int} height - Target height. / 목표 높이.
- * @param {int} gravity - Gravity for smart crop (e.g., VIPS_GRAVITY_CENTRE). / 스마트 자르기를 위한 중력 (예: VIPS_GRAVITY_CENTRE).
- * @returns {vips::VImage} - Resized and cropped image. / 리사이즈 및 잘린 이미지.
- */
+// Scale to cover, then crop based on gravity.
 vips::VImage morph_resizer_resize_smart(vips::VImage image, int width, int height, int gravity);
 
-/**
- * morph_resizer_crop
- * @description Crop the image to specified area. / 이미지를 지정된 영역으로 자릅니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} cx - Crop x position. / 자르기 시작 x 좌표.
- * @param {int} cy - Crop y position. / 자르기 시작 y 좌표.
- * @param {int} cw - Crop width. / 자르기 너비.
- * @param {int} ch - Crop height. / 자르기 높이.
- * @returns {vips::VImage} - Cropped image. / 잘린 이미지.
- */
+// Crop the image to the specified area (cx, cy, cw, ch).
 vips::VImage morph_resizer_crop(vips::VImage image, int cx, int cy, int cw, int ch);
 
-/**
- * morph_resizer_rotate
- * @description Rotate the image. / 이미지를 회전시킵니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {double} angle - Rotation angle. / 회전 각도.
- * @returns {vips::VImage} - Rotated image. / 회전된 이미지.
- */
+// Rotate the image by the given angle (degrees).
 vips::VImage morph_resizer_rotate(vips::VImage image, double angle);
 
-/**
- * morph_resizer_flip
- * @description Flip the image horizontally or vertically. / 이미지를 수직 또는 수평으로 반전시킵니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} direction - 0 for vertical, 1 for horizontal. / 0은 수직, 1은 수평.
- * @returns {vips::VImage} - Flipped image. / 반전된 이미지.
- */
+// Flip the image: direction 0 = vertical, 1 = horizontal.
 vips::VImage morph_resizer_flip(vips::VImage image, int direction);
 
 #endif

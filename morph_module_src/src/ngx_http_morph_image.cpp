@@ -1,3 +1,17 @@
+// Copyright 2025-2026 muzz
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "std.h"
 #include "ngx_http_morph_image.h"
 #include "ngx_http_morph_reader.h"
@@ -64,8 +78,7 @@ static bool morph_check_cache(MorphOptions *options, std::string *out_data, time
 // If GIF frames * width * height exceeds this, we fallback to static image (first frame).
 #define MORPH_MAX_GIF_PIXELS 200000000 
 
-// Helper: Load & Resize
-// Helper: Configure Thumbnail Options
+// Helper: Configure thumbnail load options
 static void morph_configure_thumbnail(vips::VOption *thumb_opts, MorphOptions *options, int image_type, bool force_static) {
     thumb_opts->set("no_rotate", false);
     if (options->height > 0) thumb_opts->set("height", options->height);
@@ -97,14 +110,8 @@ static void morph_detect_output_format(MorphOptions *options, int image_type) {
     options->format = target_fmt;
 }
 
-// Helper: Load & Resize
+// Helper: Load and resize image from buffer
 static vips::VImage morph_transform_load(const std::string& image_data, int image_type, MorphOptions *options) {
-    // Unified Optimized Load Logic using thumbnail_buffer
-    // This handles both static images and animated GIFs efficiently.
-    // It also handles "Smart Resize" (Cover+Crop) via VIPS_INTERESTING_CENTRE.
-    
-    // Determine if we can use thumbnail (mostly yes if resizing)
-    // We force use_thumbnail for GIFs now to use n=-1 optimization
     bool is_gif = (image_type == MORPH_IMG_GIF);
     bool use_thumbnail = false;
     bool force_static = false;
@@ -128,9 +135,6 @@ static vips::VImage morph_transform_load(const std::string& image_data, int imag
         }
     }
     
-    // Condition for thumbnail:
-    // 1. Resizing requested (W or H > 0) AND (Smart Resize OR Standard Resize)
-    // 2. We basically always use it for resize if possible.
     if ((options->width > 0 || options->height > 0)) {
          use_thumbnail = true;
     }
@@ -234,8 +238,6 @@ ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_
         vips::VOption *save_opts = vips::VImage::option();
         std::string ext = ".jpg";
         
-        // Determine output format
-        // Determine output format
         morph_detect_output_format(options, image_type);
         std::string target_fmt = options->format;
 

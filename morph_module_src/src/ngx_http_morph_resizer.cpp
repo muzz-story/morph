@@ -1,17 +1,24 @@
+// Copyright 2025-2026 muzz
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "std.h"
 #include "ngx_http_morph_resizer.h"
 #include "ngx_http_morph_types.h"
 
-/**
- * morph_resizer_resize
- * @description Resize the image to specified dimensions. / 이미지를 지정된 크기로 리사이즈합니다.
- */
 vips::VImage morph_resizer_resize(vips::VImage image, int width, int height);
 
-/**
- * morph_resizer_process_animated_frames
- * @description Helper: Process animated frames one by one for smart resize.
- */
+// Helper: Process animated GIF frames one by one for smart resize.
 static vips::VImage morph_resizer_process_animated_frames(vips::VImage image, int width, int height, int input_w, int input_h, int page_height, int gravity, int calc_h) {
     int n_pages = input_h / page_height;
     std::vector<vips::VImage> frames;
@@ -59,8 +66,7 @@ static vips::VImage morph_resizer_process_animated_frames(vips::VImage image, in
     // 3. Rejoin Frames
     vips::VImage result = vips::VImage::arrayjoin(frames, vips::VImage::option()->set("across", 1));
     
-    // 4. Update Metadata
-    int final_page_height = frames[0].height(); // Assuming all are same
+    int final_page_height = frames[0].height();
     result.set("page-height", final_page_height);
 
     // Copy optional animation metadata (delay, loop) if present
@@ -74,14 +80,7 @@ static vips::VImage morph_resizer_process_animated_frames(vips::VImage image, in
     return result;
 }
 
-/**
- * morph_resizer_resize
- * @description Resize the image to specified dimensions. / 이미지를 지정된 크기로 리사이즈합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} width - Target width. / 목표 너비.
- * @param {int} height - Target height. / 목표 높이.
- * @returns {vips::VImage} - Resized image. / 리사이즈된 이미지.
- */
+// Resize the image to specified dimensions.
 vips::VImage morph_resizer_resize(vips::VImage image, int width, int height)
 {
     if (width <= 0 && height <= 0) return image;
@@ -113,8 +112,7 @@ vips::VImage morph_resizer_resize(vips::VImage image, int width, int height)
     }
 
     if (page_height > 0) {
-        int new_page_height = (int)round(page_height * vscale); 
-        // Or better: result.height / n_pages
+        int new_page_height = (int)round(page_height * vscale);
         int n_pages = input_h / page_height;
         new_page_height = result.height() / n_pages;
         result.set("page-height", new_page_height);
@@ -122,10 +120,7 @@ vips::VImage morph_resizer_resize(vips::VImage image, int width, int height)
     return result;
 }
 
-/**
- * morph_resizer_process_static_image
- * @description Helper: Process static image (standard resize + crop)
- */
+// Helper: Process static image with cover-scale and gravity-based crop.
 static vips::VImage morph_resizer_process_static_image(vips::VImage image, int width, int height, int input_w, int input_h, int gravity) {
     // 1. Calculate Scale to COVER (max of w_scale, h_scale)
     double scale_x = (double)width / input_w;
@@ -157,17 +152,13 @@ static vips::VImage morph_resizer_process_static_image(vips::VImage image, int w
     if (cx < 0) cx = 0;
     if (cy < 0) cy = 0;
 
-    // If result is somehow smaller than target (rounding errors?), stick to new_w/h
     int crop_w = (cx + width <= new_w) ? width : (new_w - cx);
     int crop_h = (cy + height <= new_h) ? height : (new_h - cy);
     
     return resized.extract_area(cx, cy, crop_w, crop_h);
 }
 
-/**
- * morph_resizer_resize_smart
- * @description Smart Resize: Scale to cover, then crop based on gravity. / 스마트 리사이즈: 꽉 채우게 확대한 후 정렬 기준에 맞춰 자릅니다.
- */
+// Smart resize: scale to cover, then crop based on gravity.
 vips::VImage morph_resizer_resize_smart(vips::VImage image, int width, int height, int gravity)
 {
     if (width <= 0 || height <= 0) return image;
@@ -194,16 +185,7 @@ vips::VImage morph_resizer_resize_smart(vips::VImage image, int width, int heigh
     return morph_resizer_process_static_image(image, width, height, input_w, input_h, gravity);
 }
 
-/**
- * morph_resizer_crop
- * @description Crop the image to specified area. / 이미지를 지정된 영역으로 자릅니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} cx - Crop x position. / 자르기 시작 x 좌표.
- * @param {int} cy - Crop y position. / 자르기 시작 y 좌표.
- * @param {int} cw - Crop width. / 자르기 너비.
- * @param {int} ch - Crop height. / 자르기 높이.
- * @returns {vips::VImage} - Cropped image. / 잘린 이미지.
- */
+// Crop the image to the specified area (cx, cy, cw, ch).
 vips::VImage morph_resizer_crop(vips::VImage image, int cx, int cy, int cw, int ch)
 {
     int img_w = image.width();
@@ -219,13 +201,7 @@ vips::VImage morph_resizer_crop(vips::VImage image, int cx, int cy, int cw, int 
     return image.extract_area(cx, cy, cw, ch);
 }
 
-/**
- * morph_resizer_rotate
- * @description Rotate the image. / 이미지를 회전시킵니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {double} angle - Rotation angle. / 회전 각도.
- * @returns {vips::VImage} - Rotated image. / 회전된 이미지.
- */
+// Rotate the image by the given angle (degrees).
 vips::VImage morph_resizer_rotate(vips::VImage image, double angle)
 {
     while(angle < 0) angle += 360;
@@ -239,13 +215,7 @@ vips::VImage morph_resizer_rotate(vips::VImage image, double angle)
     return image.similarity(vips::VImage::option()->set("angle", angle));
 }
 
-/**
- * morph_resizer_flip
- * @description Flip the image horizontally or vertically. / 이미지를 수직 또는 수평으로 반전시킵니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} direction - 0 for vertical, 1 for horizontal. / 0은 수직, 1은 수평.
- * @returns {vips::VImage} - Flipped image. / 반전된 이미지.
- */
+// Flip the image: direction 0 = vertical, 1 = horizontal.
 vips::VImage morph_resizer_flip(vips::VImage image, int direction)
 {
     if (direction == 1) {

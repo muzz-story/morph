@@ -1,35 +1,32 @@
+// Copyright 2025-2026 muzz
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "std.h"
 #include "ngx_http_morph_filters.h"
 
-/**
- * morph_filters_apply_blur
- * @description Apply gaussian blur to the image. / 이미지에 가우시안 블러를 적용합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {double} sigma - Blur sigma value. / 블러 강도(sigma).
- * @returns {vips::VImage} - Blurred image. / 블러 처리된 이미지.
- */
+// Apply gaussian blur with the given sigma.
 vips::VImage morph_filters_apply_blur(vips::VImage image, double sigma) {
     if (sigma <= 0.0) return image;
     return image.gaussblur(sigma);
 }
 
-/**
- * morph_filters_to_grayscale
- * @description Convert image to grayscale. / 이미지를 흑백으로 변환합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @returns {vips::VImage} - Grayscale image. / 흑백 변환된 이미지.
- */
+// Convert image to grayscale.
 vips::VImage morph_filters_to_grayscale(vips::VImage image) {
     return image.colourspace(VIPS_INTERPRETATION_B_W);
 }
 
-/**
- * morph_filters_set_background
- * @description Flatten image with background color (for transparent images). / 배경색을 지정하여 이미지를 병합합니다(투명 이미지용).
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {const char*} color_hex - Hex color code (e.g., "FF00FF"). / 16진수 색상 코드.
- * @returns {vips::VImage} - Flattened image. / 배경색이 적용된 이미지.
- */
+// Flatten transparent image against the given hex background color (e.g., "FF00FF").
 vips::VImage morph_filters_set_background(vips::VImage image, const char *color_hex) {
     std::vector<double> bg_color;
     if (color_hex && strlen(color_hex) == 6) {
@@ -48,60 +45,29 @@ vips::VImage morph_filters_set_background(vips::VImage image, const char *color_
     return image.flatten(vips::VImage::option()->set("background", bg_color));
 }
 
-/**
- * morph_filters_apply_brightness
- * @description Adjust image brightness. / 이미지 밝기를 조절합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {double} brightness - Brightness level (e.g., 1.0 for original). / 밝기 레벨 (예: 1.0이 원본).
- * @returns {vips::VImage} - Brightness adjusted image. / 밝기가 조절된 이미지.
- */
+// Adjust brightness (1.0 = original).
 vips::VImage morph_filters_apply_brightness(vips::VImage image, double brightness) {
     return image.linear({brightness}, {0});
 }
 
-/**
- * morph_filters_apply_contrast
- * @description Adjust image contrast. / 이미지 대비를 조절합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {double} contrast - Contrast level (e.g., 1.0 for original). / 대비 레벨 (예: 1.0이 원본).
- * @returns {vips::VImage} - Contrast adjusted image. / 대비가 조절된 이미지.
- */
+// Adjust contrast (1.0 = original). Pivots around mid-grey (128).
 vips::VImage morph_filters_apply_contrast(vips::VImage image, double contrast) {
-    return image.linear({contrast}, {0});
+    return image.linear({contrast}, {128.0 * (1.0 - contrast)});
 }
 
-/**
- * morph_filters_apply_noise
- * @description Apply noise to the image. / 이미지에 노이즈를 적용합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {int} type - Noise type. / 노이즈 타입.
- * @param {double} sigma - Noise sigma. / 노이즈 강도(sigma).
- * @returns {vips::VImage} - Noised image. / 노이즈가 적용된 이미지.
- */
+// Apply gaussian noise with the given sigma.
 vips::VImage morph_filters_apply_noise(vips::VImage image, int type, double sigma) {
      vips::VImage noise = vips::VImage::gaussnoise(image.width(), image.height(),
         vips::VImage::option()->set("sigma", sigma)->set("mean", 0.0));
      return image + noise;
 }
 
-/**
- * morph_filters_apply_sharpen
- * @description Apply sharpen filter. / 이미지에 선명 효과(Sharpen)를 적용합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {double} sigma - Sharpen sigma value. / 선명도 강도(sigma).
- * @returns {vips::VImage} - Sharpened image. / 선명도가 조절된 이미지.
- */
+// Apply unsharp mask sharpen with the given sigma.
 vips::VImage morph_filters_apply_sharpen(vips::VImage image, double sigma) {
     return image.sharpen(vips::VImage::option()->set("sigma", sigma));
 }
 
-/**
- * morph_filters_apply_watermark
- * @description Apply watermark image. / 이미지에 워터마크를 적용합니다.
- * @param {vips::VImage} image - Input image. / 입력 이미지.
- * @param {MorphOptions*} options - Image processing options containing watermark settings. / 워터마크 설정을 포함한 이미지 처리 옵션.
- * @returns {vips::VImage} - Image with watermark. / 워터마크가 적용된 이미지.
- */
+// Composite a watermark onto the image using gravity and opacity from options.
 vips::VImage morph_filters_apply_watermark(vips::VImage image, MorphOptions *options) {
     if (options->watermark_path.empty()) return image;
     
@@ -118,7 +84,6 @@ vips::VImage morph_filters_apply_watermark(vips::VImage image, MorphOptions *opt
              vips::VImage rgb = watermark.extract_band(0, vips::VImage::option()->set("n", 3));
              watermark = rgb.bandjoin(alpha);
         } else {
-            // Add alpha if none
              vips::VImage alpha = vips::VImage::black(watermark.width(), watermark.height()) + (255 * options->watermark_opacity);
              watermark = watermark.bandjoin(alpha);
         }

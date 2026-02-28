@@ -1,4 +1,10 @@
 #!/bin/bash
+set -e
+
+# Standalone build script for Linux.
+# Run this from inside the nginx source directory.
+# Prerequisites: openssl-devel, pcre-devel, zlib-devel must be installed via dnf/apt.
+# See README.md for full dependency installation instructions.
 
 ./configure --prefix=/svc/morph/nginx \
             --without-http_charset_module \
@@ -7,7 +13,7 @@
             --with-threads \
             --with-file-aio \
             --with-cc-opt=-O3 \
-            --with-zlib=../zlib-1.3.1 \
-            --with-openssl=../openssl-1.1.1w \
-            --with-pcre=../pcre-8.45 \
             --add-dynamic-module=../morph_module_src
+
+make -j$(nproc)
+make install

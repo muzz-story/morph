@@ -1,24 +1,23 @@
+// Copyright 2025-2026 muzz
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #ifndef NGX_HTTP_MORPH_READER_H
 #define NGX_HTTP_MORPH_READER_H
 
 #include "ngx_http_morph_types.h"
 
-/**
- * morph_reader_read_source
- * @description Read raw image data from local or remote source. / 로컬 또는 원격 소스에서 원시 이미지 데이터를 읽어옵니다.
- * @param {MorphOptions*} options - Image options containing path info. / 경로 정보를 포함한 이미지 옵션.
- * @param {std::string*} out_buffer - Buffer to store read data. / 읽은 데이터를 저장할 버퍼.
- * @param {ngx_log_t*} log - Logger. / 로거.
- * @returns {ngx_int_t} - NGX_OK or error code. / 성공 시 NGX_OK 또는 에러 코드.
- */
+// Read raw image data from a local file or remote URL (with multi-source failover).
 ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffer, ngx_log_t *log);
-
-/**
- * morph_reader_check_cache
- * @description Check if the image exists in cache. / 이미지가 캐시에 존재하는지 확인합니다(추후 구현).
- * @param {const char*} path - Image path. / 이미지 경로.
- * @returns {ngx_int_t} - NGX_OK (hit) or NGX_DECLINED (miss). / 캐시 히트 시 NGX_OK, 미스 시 NGX_DECLINED.
- */
-ngx_int_t morph_reader_check_cache(const char *path);
 
 #endif
