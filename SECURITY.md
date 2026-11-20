@@ -30,9 +30,9 @@ You can expect an acknowledgement within a few days and a fix or mitigation plan
 
 | Threat | Mitigation |
 |---|---|
-| **SSRF** | Remote URLs are blocked if they resolve to localhost or private IP ranges (`127.x`, `10.x`, `192.168.x`, `::1`) |
+| **SSRF** | Client-supplied URLs are checked on the resolved address of every connection (including redirects): loopback, private, link-local, CGNAT, multicast and reserved IPv4/IPv6 ranges (incl. IPv4-mapped IPv6) are refused. Origins listed in the service config are trusted |
 | **Path Traversal** | Source paths containing `..` are rejected with `403 Forbidden` |
-| **Cache Purge abuse** | `DELETE` requests are restricted to `127.0.0.1` by default; additional admin IPs must be explicitly configured in `nginx.conf` |
+| **Cache Purge abuse** | `DELETE` is rejected unless `morph_purge on;` is set; the sample `nginx.conf` further restricts it to `127.0.0.1` via `limit_except` |
 | **Unsafe formats** | Only JPEG, PNG, WebP, and GIF are accepted; unknown magic bytes return `415 Unsupported Media Type` |
 | **Oversized GIFs** | Animated GIFs exceeding 200 megapixels fall back to static single-frame rendering |
 
@@ -88,9 +88,9 @@ Out of scope:
 
 | 위협 | 대응 |
 |---|---|
-| **SSRF** | localhost 및 사설 IP 대역(`127.x`, `10.x`, `192.168.x`, `::1`)으로의 요청 차단 |
+| **SSRF** | 클라이언트가 지정한 URL은 실제 접속하는 IP(리다이렉트 포함) 기준으로 검사: loopback, 사설, link-local, CGNAT, 멀티캐스트, 예약 대역(IPv4/IPv6, IPv4-mapped 포함) 차단. 서비스 설정의 origin은 신뢰 |
 | **Path Traversal** | `..` 포함 경로 요청 시 `403 Forbidden` 반환 |
-| **캐시 Purge 남용** | `DELETE` 요청은 기본적으로 `127.0.0.1`만 허용, 추가 IP는 `nginx.conf`에서 명시적으로 설정 필요 |
+| **캐시 Purge 남용** | `morph_purge on;` 설정이 없으면 `DELETE` 거부, 예시 `nginx.conf`는 `limit_except`로 `127.0.0.1`만 허용 |
 | **비정상 포맷** | JPEG, PNG, WebP, GIF만 허용, 알 수 없는 매직 바이트는 `415 Unsupported Media Type` 반환 |
 | **대용량 GIF** | 200MP 초과 애니메이션 GIF는 첫 프레임 정적 이미지로 자동 전환 |
 

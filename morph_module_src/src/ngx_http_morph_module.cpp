@@ -35,11 +35,13 @@ typedef struct {
     ngx_int_t   height_max;
     ngx_str_t   service_file;
     ngx_flag_t  debug;
+    ngx_flag_t  purge;
 } ngx_http_morph_loc_conf_t;
 
 static char* ngx_http_morph( ngx_conf_t* cf, ngx_command_t* cmd, void* conf );
 static void* ngx_http_morph_create_loc_conf(ngx_conf_t *cf);
 static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
+static ngx_int_t ngx_http_morph_handler(ngx_http_request_t* r);
 
 static ngx_command_t ngx_http_morph_commands[] = 
 {
@@ -114,6 +116,15 @@ static ngx_command_t ngx_http_morph_commands[] =
         ngx_conf_set_flag_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_morph_loc_conf_t, debug),
+        NULL
+    },
+
+    {
+        ngx_string( "morph_purge" ),
+        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_flag_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_morph_loc_conf_t, purge),
         NULL
     },
 
@@ -251,6 +262,7 @@ static void* ngx_http_morph_create_loc_conf(ngx_conf_t *cf)
     conf->height_min = NGX_CONF_UNSET;
     conf->height_max = NGX_CONF_UNSET;
     conf->debug = NGX_CONF_UNSET;
+    conf->purge = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -267,6 +279,18 @@ static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *c
     ngx_conf_merge_value(conf->width_max, prev->width_max, 4000);
     ngx_conf_merge_value(conf->height_min, prev->height_min, 1);
     ngx_conf_merge_value(conf->height_max, prev->height_max, 4000);
+    ngx_conf_merge_value(conf->purge, prev->purge, 0);
+
+    // Requests matched by limit_except (e.g. DELETE) run on that block's own core conf, which has
+    // no content handler; without this they fall through to the static module and get 405.
+    // Same approach as ngx_http_proxy_merge_loc_conf.
+    // limit_except에 걸린 요청(예: DELETE)은 그 블록 자체의 core conf로 처리되는데, 거기엔 콘텐츠
+    // 핸들러가 없어서 이 처리가 없으면 static 모듈로 넘어가 405가 된다.
+    // ngx_http_proxy_merge_loc_conf와 같은 방식이다.
+    ngx_http_core_loc_conf_t *clcf = (ngx_http_core_loc_conf_t *)ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    if (clcf->lmt_excpt && clcf->handler == NULL && conf->enable == 1) {
+        clcf->handler = ngx_http_morph_handler;
+    }
     ngx_conf_merge_str_value(conf->service_file, prev->service_file, "");
     if (conf->service_file.len > 0) {
         if (conf->service_file.data[0] == '/') {
@@ -306,10 +330,33 @@ static char* ngx_http_morph_merge_loc_conf(ngx_conf_t *cf, void *parent, void *c
 
 // ------------------------------------------------------------------
 // Parsing Helpers (Refactoring)
+// 파싱 헬퍼
 // ------------------------------------------------------------------
 
+// Strict decimal int list ("10,20,30") with range check; sscanf("%d") overflows silently.
+// 범위 검사가 있는 엄격한 10진 정수 목록 ("10,20,30"). sscanf("%d")는 오버플로를 알리지 않는다.
+static bool parse_int_list(const char *s, char sep, int count, int *out, long lo, long hi) {
+    for (int i = 0; i < count; i++) {
+        if (!(isdigit((unsigned char)*s) || *s == '-')) return false;
+        char *end;
+        errno = 0;
+        long v = strtol(s, &end, 10);
+        if (errno != 0 || end == s || v < lo || v > hi) return false;
+        out[i] = (int)v;
+        if (i < count - 1) {
+            if (*end != sep) return false;
+            s = end + 1;
+        } else if (*end != '\0') {
+            return false;
+        }
+    }
+    return true;
+}
+
 static ngx_int_t parse_crop(const std::string& part, MorphOptions& opts) {
-    if (sscanf(part.c_str(), "C%d,%d,%d,%d", &opts.cx, &opts.cy, &opts.cw, &opts.ch) != 4) return NGX_ERROR;
+    int v[4];
+    if (!parse_int_list(part.c_str() + 1, ',', 4, v, -100000, 100000)) return NGX_ERROR;
+    opts.cx = v[0]; opts.cy = v[1]; opts.cw = v[2]; opts.ch = v[3];
     opts.has_crop = true;
     return NGX_OK;
 }
@@ -322,14 +369,21 @@ static ngx_int_t parse_watermark(const std::string& part, MorphOptions& opts) {
     std::string item;
     while(std::getline(ss, item, ',')) {
         size_t colon = item.find(':');
-        if (colon != std::string::npos) {
+        if (colon == std::string::npos) return NGX_ERROR;
+        {
             std::string k = item.substr(0, colon);
             std::string v = item.substr(colon+1);
             
             if (k == "path") opts.watermark_path = MorphUtils::sanitize_path(v);
-            else if (k == "o" || k == "opacity") opts.watermark_opacity = std::stod(v);
-            else if (k == "x") opts.watermark_x_offset = std::stoi(v);
-            else if (k == "y") opts.watermark_y_offset = std::stoi(v);
+            else if (k == "o" || k == "opacity") {
+                opts.watermark_opacity = std::stod(v);
+                if (!(opts.watermark_opacity >= 0.0 && opts.watermark_opacity <= 1.0)) return NGX_ERROR;
+            }
+            else if (k == "x" || k == "y") {
+                int off;
+                if (!parse_int_list(v.c_str(), ',', 1, &off, -100000, 100000)) return NGX_ERROR;
+                (k == "x" ? opts.watermark_x_offset : opts.watermark_y_offset) = off;
+            }
             else if (k == "g") {
                 if (v == "c" || v == "center") opts.watermark_gravity = MORPH_GRAVITY_CENTER;
                 else if (v == "nw" || v == "tl") opts.watermark_gravity = MORPH_GRAVITY_TOP_LEFT;
@@ -340,29 +394,53 @@ static ngx_int_t parse_watermark(const std::string& part, MorphOptions& opts) {
                 else if (v == "sw" || v == "bl") opts.watermark_gravity = MORPH_GRAVITY_BOTTOM_LEFT;
                 else if (v == "s" || v == "bottom") opts.watermark_gravity = MORPH_GRAVITY_BOTTOM;
                 else if (v == "se" || v == "br") opts.watermark_gravity = MORPH_GRAVITY_BOTTOM_RIGHT;
+                else return NGX_ERROR;
             }
+            else return NGX_ERROR;
         }
     }
+    // ".", ".." would resolve to a directory, not a file
+    // ".", ".."는 파일이 아니라 디렉터리로 해석된다
+    if (opts.watermark_path.empty() || opts.watermark_path.find_first_not_of('.') == std::string::npos) return NGX_ERROR;
     return NGX_OK;
 }
 
+// Parses a number and checks it is finite and inside [lo, hi]; std::stod throws on garbage.
+// 숫자를 파싱하고 유한한 값이며 [lo, hi] 안인지 확인한다. std::stod는 잘못된 입력에 예외를 던진다.
+static bool parse_bounded(const std::string& val, double lo, double hi, double& out) {
+    double d = std::stod(val);
+    if (!std::isfinite(d) || d < lo || d > hi) return false;
+    out = d;
+    return true;
+}
+
 static ngx_int_t parse_single_filter(const std::string& key, const std::string& val, MorphOptions& opts) {
-    if (key == "bakground_color" || key == "background_color") { opts.bg_color = val; }
-    else if (key == "blur" && !val.empty()) { opts.blur_sigma = std::stod(val); }
-    else if (key == "sharpen" && !val.empty()) { opts.sharpen_sigma = std::stod(val); }
-    else if (key == "format") { opts.format = val; }
+    // Upper bounds keep a single request from pinning a worker (gaussblur cost grows with sigma)
+    // 상한을 둬서 요청 하나가 워커를 붙잡지 못하게 한다 (gaussblur 비용은 sigma에 따라 커진다)
+    bool ok = true;
+    if (key == "bakground_color" || key == "background_color") {
+        ok = val.size() == 6 && val.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
+        opts.bg_color = val;
+    }
+    else if (key == "blur" && !val.empty()) { ok = parse_bounded(val, 0.0, 50.0, opts.blur_sigma); }
+    else if (key == "sharpen" && !val.empty()) { ok = parse_bounded(val, 0.0, 10.0, opts.sharpen_sigma); }
+    else if (key == "format") {
+        opts.format = (val == "jpeg") ? "jpg" : val;
+        ok = opts.format == "jpg" || opts.format == "png" || opts.format == "webp" || opts.format == "gif";
+    }
     else if (key == "grayscale") { opts.grayscale = true; }
-    else if (key == "quality" && !val.empty()) { opts.quality = std::stoi(val); }
-    else if (key == "rotate" && !val.empty()) { opts.rotate_angle = std::stod(val); }
+    else if (key == "quality" && !val.empty()) { opts.quality = std::stoi(val); ok = opts.quality >= 1 && opts.quality <= 100; }
+    else if (key == "rotate" && !val.empty()) { ok = parse_bounded(val, -3600.0, 3600.0, opts.rotate_angle); }
     else if (key == "flip") {
         opts.flip = true;
+        ok = val.empty() || val == "v" || val == "h";
         opts.flip_dir = (val == "h") ? 1 : 0;
     }
-    else if (key == "brightness" && !val.empty()) { opts.brightness = std::stod(val); }
-    else if (key == "contrast" && !val.empty()) { opts.contrast = std::stod(val); }
-    else if (key == "noise" && !val.empty()) { opts.noise_sigma = std::stod(val); }
+    else if (key == "brightness" && !val.empty()) { ok = parse_bounded(val, 0.0, 10.0, opts.brightness); }
+    else if (key == "contrast" && !val.empty()) { ok = parse_bounded(val, 0.0, 10.0, opts.contrast); }
+    else if (key == "noise" && !val.empty()) { ok = parse_bounded(val, 0.0, 100.0, opts.noise_sigma); }
     else { return NGX_ERROR; } 
-    return NGX_OK;
+    return ok ? NGX_OK : NGX_ERROR;
 }
 
 static ngx_int_t parse_filter(const std::string& part, MorphOptions& opts) {
@@ -391,17 +469,34 @@ static ngx_int_t parse_gravity(const std::string& part, MorphOptions& opts) {
 }
 
 static ngx_int_t parse_dimension(const std::string& part, MorphOptions& opts) {
-    int w = 0, h = 0;
-    if (sscanf(part.c_str(), "%dx%d", &w, &h) != 2) return NGX_ERROR;
-    opts.width = w;
-    opts.height = h;
+    int v[2];
+    // range is enforced again against width_max/height_max in the handler
+    // 범위는 핸들러에서 width_max/height_max로 다시 검사한다
+    if (!parse_int_list(part.c_str(), 'x', 2, v, 0, 100000)) return NGX_ERROR;
+    opts.width = v[0];
+    opts.height = v[1];
     return NGX_OK;
 }
 
+// Find the next '_' separator outside parentheses, so values like
+// F(background_color:fff) or W(path:my_logo.png) stay in one part.
+// 괄호 밖에 있는 다음 '_' 구분자를 찾는다. 그래서 F(background_color:fff)나
+// W(path:my_logo.png) 같은 값이 한 덩어리로 유지된다.
+static size_t find_separator(const std::string& s, size_t from) {
+    int depth = 0;
+    for (size_t i = from; i < s.size(); i++) {
+        if (s[i] == '(') depth++;
+        else if (s[i] == ')' && depth > 0) depth--;
+        else if (s[i] == '_' && depth == 0) return i;
+    }
+    return std::string::npos;
+}
+
 // Parse the URL option segment to extract image processing parameters.
+// URL의 옵션 구간을 파싱해서 이미지 처리 파라미터를 뽑는다.
 static ngx_int_t parse_options(const std::string& segment, MorphOptions& opts) {
     size_t start = 0;
-    size_t end = segment.find('_');
+    size_t end = find_separator(segment, 0);
     
     while (true) {
         std::string part;
@@ -425,16 +520,9 @@ static ngx_int_t parse_options(const std::string& segment, MorphOptions& opts) {
 
         if (end == std::string::npos) break;
         start = end + 1;
-        end = segment.find('_', start);
+        end = find_separator(segment, start);
     }
     return NGX_OK;
-}
-
-size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *stream) {
-    std::vector<char> *data = (std::vector<char> *)stream;
-    size_t count = size * nmemb;
-    data->insert(data->end(), (char*)ptr, (char*)ptr + count);
-    return count;
 }
 
 struct MorphThreadCtx {
@@ -455,7 +543,14 @@ static void morph_thread_func(void *data, ngx_log_t *log)
     if (ctx->options.debug) {
         MorphLogger::instance().debug("Thread Started: %s (PID: %d)", ctx->options.source_path.c_str(), (int)ngx_pid);
     }
-    ctx->status = morph_image_process(&ctx->options, &ctx->output_data, log, &ctx->is_cache_hit, &ctx->last_modified);
+    try {
+        ctx->status = morph_image_process(&ctx->options, &ctx->output_data, log, &ctx->is_cache_hit, &ctx->last_modified);
+    } catch (...) {
+        // An exception escaping the thread pool task would terminate the worker
+        // 스레드풀 작업 밖으로 예외가 나가면 워커가 종료된다
+        ngx_log_error(NGX_LOG_ERR, log, 0, "Morph: Unexpected exception: %s", ctx->options.source_path.c_str());
+        ctx->status = NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
 }
 
 static void morph_thread_completion(ngx_event_t *ev)
@@ -548,17 +643,18 @@ static void morph_thread_completion(ngx_event_t *ev)
         }
     }
 
-    ngx_http_send_header(r);
-    ngx_http_output_filter(r, &out);
-    
     if (ctx->options.debug) {
         std::string client_ip((char*)r->connection->addr_text.data, r->connection->addr_text.len);
         MorphLogger::instance().debug("Status: OK, Client IP: %s", client_ip.c_str());
     }
-
     delete ctx;
-    
-    ngx_http_finalize_request(r, NGX_HTTP_OK);
+
+    ngx_int_t rc = ngx_http_send_header(r);
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) { // HEAD: headers only / HEAD면 헤더만
+        ngx_http_finalize_request(r, rc);
+        return;
+    }
+    ngx_http_finalize_request(r, ngx_http_output_filter(r, &out));
 }
 
 static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
@@ -574,6 +670,19 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
         return NGX_HTTP_NOT_ALLOWED;
     }
 
+    // Purge is opt-in: without "morph_purge on" anyone reaching the location could wipe the cache.
+    // purge는 명시적으로 켜야 한다: "morph_purge on" 없이 열어 두면 location에 닿는 누구나 캐시를 지울 수 있다.
+    if (r->method == NGX_HTTP_DELETE && cf->purge != 1) {
+        return NGX_HTTP_NOT_ALLOWED;
+    }
+
+    // An unread body would be parsed as the next request on a keep-alive connection
+    // 읽지 않은 본문은 keep-alive 연결에서 다음 요청으로 해석된다
+    ngx_int_t body_rc = ngx_http_discard_request_body(r);
+    if (body_rc != NGX_OK) {
+        return body_rc;
+    }
+
     std::string uri((char*)r->uri.data, r->uri.len);
 
     if (uri.find("/morph/") == 0) {
@@ -585,8 +694,8 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     size_t first_slash = uri.find('/');
     size_t second_slash = uri.find('/', first_slash + 1);
     
-    if (first_slash == std::string::npos || second_slash == std::string::npos) {
-        return NGX_HTTP_BAD_REQUEST;
+    if (first_slash == std::string::npos || second_slash == std::string::npos || second_slash + 1 >= uri.size()) {
+        return NGX_HTTP_BAD_REQUEST; // also rejects an empty source path / 빈 원본 경로도 거부
     }
     
     std::string service_name = uri.substr(0, first_slash);
@@ -597,14 +706,37 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
     std::string doc_root((char*)clcf->root.data, clcf->root.len);
 
     MorphOptions options;
-    if (parse_options(options_str, options) != NGX_OK) {
+    ngx_int_t parse_rc;
+    try {
+        parse_rc = parse_options(options_str, options);
+    } catch (const std::exception&) {
+        // std::stod/stoi on bad input (e.g. "F(blur:abc)") would otherwise abort the worker
+        // 잘못된 입력(예: "F(blur:abc)")에서 std::stod/stoi가 던진 예외가 워커를 죽이지 않게 한다
+        parse_rc = NGX_ERROR;
+    }
+    if (parse_rc != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Morph: Invalid options format: %s", options_str.c_str());
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    // 0 means "not set" (e.g. "300x0" keeps aspect ratio)
+    // 0은 "지정 안 함" (예: "300x0"은 비율 유지)
+    if ((options.width != 0 && (options.width < cf->width_min || options.width > cf->width_max)) ||
+        (options.height != 0 && (options.height < cf->height_min || options.height > cf->height_max))) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Morph: Size out of range: %dx%d", options.width, options.height);
         return NGX_HTTP_BAD_REQUEST;
     }
     options.source_path = source_path;
     options.service_name = service_name;
     options.document_root = doc_root;
     options.raw_options = options_str;
+
+    // Resolved before the cache path: the effective quality is part of the cache key.
+    // An explicit F(quality:N) wins over both directives.
+    // 캐시 경로보다 먼저 정한다: 실제 적용 quality가 캐시 키의 일부다.
+    // 명시한 F(quality:N)이 두 지시어보다 우선한다.
+    options.webp_quality = options.quality != 0 ? options.quality : cf->webp_quality;
+    if (options.quality == 0) options.quality = cf->quality;
     
     if (r->method == NGX_HTTP_DELETE) {
         std::string cache_path = morph_image_get_cache_path(&options);
@@ -627,7 +759,6 @@ static ngx_int_t ngx_http_morph_handler( ngx_http_request_t* r )
         ctx->if_modified_since = ngx_http_parse_time(r->headers_in.if_modified_since->value.data, r->headers_in.if_modified_since->value.len);
     }
     
-    if (ctx->options.quality == 0) ctx->options.quality = cf->quality != NGX_CONF_UNSET ? cf->quality : 90;
     ctx->options.debug = cf->debug == 1;
 
     if (ctx->options.debug) {

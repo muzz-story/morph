@@ -18,6 +18,7 @@
 #include "std.h"
 
 // Gravity Constants
+// gravity 상수
 #define MORPH_GRAVITY_CENTER 0
 #define MORPH_GRAVITY_TOP    1
 #define MORPH_GRAVITY_BOTTOM 2
@@ -34,34 +35,39 @@ typedef struct {
     bool debug = false;
     
     // Crop Settings
-    bool has_crop = false; // Manual Crop (Cx, Cy, Cw, Ch)
+    // 크롭 설정
+    bool has_crop = false; // Manual Crop (Cx, Cy, Cw, Ch) / 수동 크롭
     int cx = 0;
     int cy = 0;
     int cw = 0;
     int ch = 0;
 
     // Smart Crop / Resize Settings
-    int gravity = MORPH_GRAVITY_CENTER; // For "Cover" resize strategy if no manual crop
+    // 스마트 크롭 / 리사이즈 설정
+    int gravity = MORPH_GRAVITY_CENTER; // For "Cover" resize strategy if no manual crop / 수동 크롭이 없을 때 cover 리사이즈의 기준 위치
 
     // Filters
+    // 필터
     std::string bg_color;
     double blur_sigma = 0.0;
     std::string format;
     bool grayscale = false;
     int quality = 0;
+    int webp_quality = 0;
     double rotate_angle = 0.0;
     
     bool flip = false;
-    int flip_dir = 0; // 0: vertical, 1: horizontal
+    int flip_dir = 0; // 0: vertical, 1: horizontal / 0: 상하, 1: 좌우
     double brightness = 1.0;
     double contrast = 1.0;
     double noise_sigma = 0.0;
-    int noise_type = 0;
 
     // Sharpen Filter
+    // 샤프닝 필터
     double sharpen_sigma = 0.0;
 
     // Watermark
+    // 워터마크
     std::string watermark_path;
     int watermark_gravity = MORPH_GRAVITY_CENTER;
     double watermark_opacity = 1.0;
@@ -76,7 +82,7 @@ typedef struct {
 
 struct MorphServiceConfig {
     std::vector<std::string> sources;
-    int ttl; // seconds, -1 for no expiry
+    int ttl; // seconds, -1 for no expiry / 초 단위, -1이면 만료 없음
 };
 
 #endif // NGX_HTTP_MORPH_TYPES_H

@@ -8,7 +8,6 @@
 [![Libvips](https://img.shields.io/badge/libvips-8.x-green.svg)](https://libvips.github.io/libvips)
 
 > 이 프로젝트는 이미지 리사이즈 처리를 위한 Nginx 모듈 기반 플랫폼입니다.
-> 사람과 AI가 함께 만들었으며, 아직 성장 중인 프로젝트입니다.
 > 사용 중 발견한 버그나 좋은 아이디어가 있다면 [Issues](../../issues)로 편하게 남겨주세요!
 
 ---
@@ -53,7 +52,7 @@ morph/
 ## 프로젝트 기능
 
 1.  **이미지 변환**: 리사이징(Width/Height), Smart Crop, 회전, 뒤집기.
-2.  **화질 개선 및 필터**: Sharpen, Blur, Grayscale, Brightness/Contrast/Saturation 조정, 배경색 지정.
+2.  **화질 개선 및 필터**: Sharpen, Blur, Grayscale, Brightness/Contrast, Noise 조정, 배경색 지정, 워터마크.
 3.  **포맷 변환**: JPEG, PNG, WebP, GIF 지원 (자동 최적화).
 4.  **강력한 캐싱**:
     - 변환된 이미지를 로컬 디스크에 캐싱.
@@ -75,10 +74,12 @@ http://[도메인]/morph/[서비스명]/[옵션]/[원본경로]
 ### 2. 옵션 예시 (`[옵션]` 부분)
 
 - **기본 리사이징**: `200x300` (가로 200, 세로 300)
-- **크롭 포함**: `200x300_C10,10,10,10` (상하좌우 10px 크롭 후 리사이징)
+- **크롭 포함**: `200x300_C10,10,500,400` ((10,10)에서 500×400 크롭 후 200×300으로 리사이징)
 - **필터 적용**: `200x0_F(grayscale)_F(blur:1.5)` (세로 자동, 흑백 변환, 블러 1.5)
 - **샤픈 필터**: `F(sharpen:1.0)` (선명하게)
-- **워터마크**: `_W(path:logo.png,g:se,o:0.5)` (우측 하단, 투명도 50%)
+- **워터마크**: `_W(path:logo.png,g:se,o:0.5)` (우측 하단, 투명도 50%, 파일 위치 `{root}/{service}/`)
+- **값 범위** (벗어나면 `400`): 크기 `width_min..width_max` / `height_min..height_max` (기본 1..4000, `0`=자동), `blur` 0–50, `sharpen` 0–10, `noise` 0–100, `brightness`/`contrast` 0–10, `quality` 1–100, 워터마크 `o` 0–1, `format` jpg/jpeg/png/webp/gif, `background_color` 6자리 hex
+- **안전 한도**: 원본 파일 50MB 이하, 단일 프레임 150MP 이하(초과 시 `413`), 애니메이션 GIF는 1000프레임·전체 200MP 이하(초과 시 첫 프레임만). GIF 애니메이션은 출력이 GIF/WebP일 때만 유지되고 JPEG/PNG 출력은 첫 프레임을 씁니다.
 - **포맷 변환**: `200x200_F(format:webp)`
 - **GIF**: 별도 옵션 없이 애니메이션 GIF 자동 지원
 
@@ -195,6 +196,8 @@ Docker를 이용하면 복잡한 의존성 설치 없이 즉시 빌드 및 테�
 
     #### 캐시 퍼지
 
+    기본은 비활성입니다. location에 `morph_purge on;`을 추가하고 `limit_except`로 허용 IP를 제한하세요 (`nginx_conf/nginx.conf` 참고).
+
     ```bash
     curl -X DELETE http://localhost:8080/morph/test/800x600/1200/800
     ```
@@ -284,7 +287,7 @@ wrk -t4 -c50 -d30s "http://localhost:8080/morph/myservice/500x500/images/photo.j
 | -------------------- | ------------------------------------------------- |
 | **첫 번째 요청**     | 원본 fetch + 변환 + 캐시 저장 (Cold cache)        |
 | **이후 요청**        | 디스크 캐시에서 직접 응답 (Warm cache)            |
-| **TTL 만료 후 요청** | 백그라운드 갱신, 이전 캐시를 즉시 반환 (Lazy TTL) |
+| **TTL 만료 후 요청** | 만료 파일을 지우고 그 요청에서 다시 생성 (Lazy TTL, `MISS`) |
 
 > Cold / Warm 캐시 응답 시간을 비교하면 캐시 효과를 직접 확인할 수 있습니다.
 
