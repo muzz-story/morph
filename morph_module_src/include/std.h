@@ -20,19 +20,17 @@
 
 #include <string>
 #include <map>
-#include <list>
-#include <math.h>
+#include <cmath>
+#include <cerrno>
 
 #include <vector>
+#include <functional>
 #include <mutex>
 #include <curl/curl.h>
 #include <cstdarg>
 #include <openssl/md5.h>
 #include <ctime>
 #include <iomanip>
-
-#define __max(a,b) (((a) > (b)) ? (a) : (b)) 
-#define __min(a,b) (((a) < (b)) ? (a) : (b)) 
 
 extern "C" {
 #include <ngx_config.h>
@@ -44,6 +42,7 @@ extern "C" {
 #include <vips/vips8>
 
 // JSON & Streams
+// JSON 및 스트림
 #include <fstream>
 #include <iostream>
 #include <sstream>

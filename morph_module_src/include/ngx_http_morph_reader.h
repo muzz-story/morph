@@ -18,6 +18,7 @@
 #include "ngx_http_morph_types.h"
 
 // Read raw image data from a local file or remote URL (with multi-source failover).
+// 로컬 파일이나 원격 URL에서 원본 이미지 데이터를 읽는다 (여러 소스 failover 지원).
 ngx_int_t morph_reader_read_source(MorphOptions *options, std::string *out_buffer, ngx_log_t *log);
 
 #endif

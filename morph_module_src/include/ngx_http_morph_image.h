@@ -26,12 +26,15 @@ typedef enum {
 } MorphImageType;
 
 // Run the full image pipeline: cache check -> fetch -> validate -> transform -> save.
+// 전체 이미지 파이프라인 실행: 캐시 확인 -> 원본 가져오기 -> 검증 -> 변환 -> 저장.
 ngx_int_t morph_image_process(MorphOptions *options, std::string *out_data, ngx_log_t *log, bool *is_cache_hit, time_t *last_modified);
 
 // Identify image format by magic bytes. Sets out_type to MorphImageType.
+// 매직 바이트로 이미지 포맷을 판별해 out_type에 MorphImageType을 넣는다.
 ngx_int_t morph_image_validate_hex(void *data, size_t len, int *out_type);
 
 // Compute the local cache file path from the given options.
+// options로 로컬 캐시 파일 경로를 계산한다.
 std::string morph_image_get_cache_path(MorphOptions *options);
 
 #endif

@@ -8,7 +8,6 @@
 [![Libvips](https://img.shields.io/badge/libvips-8.x-green.svg)](https://libvips.github.io/libvips)
 
 > This project is an Nginx module platform for on-the-fly image processing.
-> Built together by a human and AI — still growing.
 > Found a bug or have a good idea? Feel free to open an [Issue](../../issues)!
 
 ---
@@ -55,7 +54,7 @@ morph/
 ## Features
 
 1. **Image Transform** — Resize (width/height), Smart Crop, rotate, flip
-2. **Filters** — Sharpen, blur, grayscale, brightness/contrast/saturation, background color
+2. **Filters** — Sharpen, blur, grayscale, brightness/contrast, noise, background color, watermark
 3. **Format Conversion** — JPEG, PNG, WebP, GIF (auto-detect, auto-optimize)
 4. **Caching**
    - Transformed images cached to local disk
@@ -76,14 +75,18 @@ http://[domain]/morph/[service]/[options]/[origin-path]
 
 ### Option Examples
 
-| Option                           | Description                         |
-| -------------------------------- | ----------------------------------- |
-| `200x300`                        | Resize to 200×300                   |
-| `200x300_C10,10,10,10`           | Crop 10px each side, then resize    |
-| `200x0_F(grayscale)_F(blur:1.5)` | Auto height, grayscale + blur       |
-| `F(sharpen:1.0)`                 | Sharpen                             |
-| `_W(path:logo.png,g:se,o:0.5)`   | Watermark bottom-right, 50% opacity |
-| `200x200_F(format:webp)`         | Convert to WebP                     |
+| Option                           | Description                                                       |
+| -------------------------------- | ----------------------------------------------------------------- |
+| `200x300`                        | Resize to 200×300                                                 |
+| `200x300_C10,10,500,400`         | Crop 500×400 at (10,10), then resize to 200×300                   |
+| `200x0_F(grayscale)_F(blur:1.5)` | Auto height, grayscale + blur                                     |
+| `F(sharpen:1.0)`                 | Sharpen                                                           |
+| `_W(path:logo.png,g:se,o:0.5)`   | Watermark bottom-right, 50% opacity (file in `{root}/{service}/`) |
+| `200x200_F(format:webp)`         | Convert to WebP                                                   |
+
+Value limits (out of range → `400`): size within `width_min..width_max` / `height_min..height_max` (default 1..4000, `0` = auto), `blur` 0–50, `sharpen` 0–10, `noise` 0–100, `brightness`/`contrast` 0–10, `quality` 1–100, watermark `o` 0–1, `format` jpg/jpeg/png/webp/gif, `background_color` 6-digit hex. Animated GIFs keep all frames through crop, rotate, flip, blur, sharpen and watermark when the output is GIF or WebP (JPEG/PNG output uses the first frame).
+
+Safety caps: source file ≤ 50 MB, single frame ≤ 150 MP (else `413`), animated GIF ≤ 1000 frames and ≤ 200 MP in total (else first frame only).
 
 ### Request Examples
 
@@ -197,6 +200,8 @@ Service `test` (source: `https://picsum.photos`) is pre-configured — no extra 
 
 #### Cache Purge
 
+Disabled by default. Enable it with `morph_purge on;` in the location and restrict it with `limit_except` (see `nginx_conf/nginx.conf`).
+
 ```bash
 curl -X DELETE http://localhost:8080/morph/test/800x600/1200/800
 ```
@@ -280,7 +285,7 @@ wrk -t4 -c50 -d30s "http://localhost:8080/morph/myservice/500x500/images/photo.j
 | ----------------------- | -------------------------------------------------------------------- |
 | **First request**       | Origin fetch + transform + cache write (Cold cache)                  |
 | **Subsequent requests** | Served directly from disk cache (Warm cache)                         |
-| **After TTL expiry**    | Stale cache returned immediately; refreshed in background (Lazy TTL) |
+| **After TTL expiry**    | Expired file is removed and the image is regenerated on that request (Lazy TTL, `MISS`) |
 
 > Compare cold vs. warm cache response times to see the caching benefit directly.
 
